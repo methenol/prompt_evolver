@@ -136,3 +136,7 @@ The system saves various files to the output directory:
 5. **Breeding**: New prompt variants are created through crossover and mutation
 6. **Evolution**: The process repeats over multiple generations
 7. **Refinement**: Optional LLM-based breeding can be used for more sophisticated prompt refinement
+
+## Note
+
+To force using the variables set in the .env file, change load_dotenv() to load_dotenv(override=True) in config.py. If using Docker, leave this unchanged and the variables defined on the container will override the .env values.

@@ -36,6 +36,7 @@ class Evolution:
         self.intent_analyzer = intent_analyzer
         self.fitness_evaluator = FitnessEvaluator(client, intent_analyzer)
         self.population: Optional[Population] = None
+        self.original_prompt: Optional[str] = None # Added
         self.generation = 0
         self.best_individual: Optional[Individual] = None
         self.history: List[Dict[str, Any]] = []
@@ -61,6 +62,7 @@ class Evolution:
         strategies = seed_strategies if seed_strategies else []
         self.population = Population(size=population_size, init_strategies=strategies)
         self.generation = 0
+        self.original_prompt = None # Reset on fresh initialize
     
     async def evolve(
         self, 
@@ -74,27 +76,42 @@ class Evolution:
         """Run the evolutionary process."""
         if not self.population:
             raise ValueError("Population not initialized. Call initialize() first.")
-        
-        # Analyze prompt intent
-        intent_analysis = await self.intent_analyzer.analyze_multi_faceted(prompt)
-        print(f"\nEvolutionary process starting with {len(self.population.individuals)} individuals")
+
+        # Store original prompt if not already loaded
+        if self.original_prompt is None:
+            self.original_prompt = prompt
+        elif prompt != self.original_prompt:
+             # If a prompt is provided via args but we loaded one, use the loaded one.
+             # Log a warning if a different prompt was also provided via args.
+             if prompt:
+                 print(f"Warning: Loaded state includes original prompt '{self.original_prompt}'. Ignoring provided prompt '{prompt}'.")
+             prompt = self.original_prompt # Ensure we use the loaded original prompt
+
+        # Analyze prompt intent using the original prompt
+        intent_analysis = await self.intent_analyzer.analyze_multi_faceted(self.original_prompt)
+        print(f"\nEvolutionary process starting/resuming with {len(self.population.individuals)} individuals")
         print("\nIntent Analysis:", json.dumps(intent_analysis, indent=2))
-        
-        # If using LLM breeding, we need to generate initial prompts
-        if self.use_llm_breeding:
-            await self._initialize_population_with_llm(prompt)
-        
+
+        # If using LLM breeding and it's the very first run (gen 0), initialize prompts
+        if self.use_llm_breeding and self.generation == 0:
+             await self._initialize_population_with_llm(self.original_prompt)
+
         # Track best individual
         best_fitness = self.best_individual.fitness.get("overall", 0) if self.best_individual else 0
-        
+
         # Create output directory if it doesn't exist
         os.makedirs(self.output_dir, exist_ok=True)
-        
+
+        # Calculate start and end generations for resuming
+        start_generation = self.generation + 1
+        end_generation = start_generation + generations -1 # Run for the specified number of *additional* generations
+        print(f"Running from generation {start_generation} to {end_generation}")
+
         # Run for specified number of generations
-        for gen in range(generations):
-            self.generation = gen + 1
+        for gen in range(start_generation, end_generation + 1):
+            self.generation = gen
             print(f"\n--- Generation {self.generation} ---")
-            
+
             # Evaluate current population - use LLM evaluation if enabled
             if self.use_llm_breeding:
                 await self._evaluate_population_with_llm(prompt)
@@ -405,11 +422,12 @@ class Evolution:
         
         state = {
             "generation": self.generation,
+            "original_prompt": self.original_prompt, # Added
             "population": self.population.to_json(),
             "history": self.history,
             "best_individual": self.best_individual.to_json() if self.best_individual else None
         }
-        
+
         try:
             # Ensure directory exists
             os.makedirs(os.path.dirname(filepath), exist_ok=True)
@@ -426,13 +444,14 @@ class Evolution:
         try:
             with open(filepath, 'r') as f:
                 state = json.load(f)
-            
+
             self.generation = state.get("generation", 0)
+            self.original_prompt = state.get("original_prompt") # Added
             self.history = state.get("history", [])
-            
+
             population_data = state.get("population", [])
             self.population = Population.from_json(population_data)
-            
+
             best_individual_data = state.get("best_individual")
             if best_individual_data:
                 self.best_individual = Individual.from_json(best_individual_data)

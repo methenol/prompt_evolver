@@ -84,12 +84,9 @@ async def main():
                     population_size=config.population_size,
                     seed_strategies=seed_strategies
                 )
-            else:
-                # Use the prompt from the loaded state if available
-                if evolution.best_individual:
-                    prompt = evolution.best_individual.prompt_result
-                else:
-                    prompt = args.prompt  # Fallback to command line prompt if not loaded
+            # Prompt handling is now done within evolution.evolve when loading
+            # We still need a fallback if no prompt is loaded and none is provided via args
+            prompt = args.prompt
         else:
             # Initialize evolution
             await evolution.initialize(
@@ -97,10 +94,16 @@ async def main():
                 seed_strategies=seed_strategies
             )
             prompt = args.prompt
-        
-        if not prompt:
+
+        # Only ask for input if not loading and no prompt provided
+        if not args.load and not prompt:
             prompt = input("Enter your prompt: ")
-        
+        elif args.load and not evolution.original_prompt:
+             # If loading failed or the loaded state somehow lacks the prompt, ask.
+             print("Warning: Loaded state did not contain an original prompt.")
+             prompt = input("Enter your prompt: ")
+
+
         print(f"\nEvolving prompt over {config.num_generations} generations...")
         print(f"Population size: {config.population_size}")
         print(f"Mutation rate: {config.mutation_rate}")
