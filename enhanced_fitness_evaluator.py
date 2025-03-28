@@ -1,4 +1,6 @@
 import asyncio
+import json
+import re
 from typing import Dict, List, Optional, Union, TypeVar, Callable, Any
 from unified_fitness_metrics import UnifiedFitnessMetrics
 from config import default_config
@@ -28,15 +30,41 @@ class EnhancedFitnessEvaluator:
         self.evaluation_results: Dict[str, List[float]] = {}
 
     def _parse_score(self, content: str) -> float:
-        """Parse and validate the score from LLM response."""
+        """Parse the score from LLM JSON response, extracting JSON even if extra text exists."""
         try:
-            # Remove any non-numeric characters except decimal point
-            cleaned = ''.join(c for c in content if c.isdigit() or c == '.')
-            score = float(cleaned)
-            return max(0.3, min(1.0, score))
+            # Use regex to find the first JSON object in the content
+            match = re.search(r'\{.*?\}', content, re.DOTALL)
+            if not match:
+                raise json.JSONDecodeError("No JSON object found in response", content, 0)
+                
+            json_str = match.group(0)
+            
+            # Attempt to parse the extracted JSON string
+            data = json.loads(json_str)
+            
+            # Extract the score
+            score = data['score']
+            
+            # Convert score to float and validate range
+            # Removed isinstance check to allow string scores like "0.83"
+            score = float(score) # Attempt conversion
+            
+            if not (0.0 <= score <= 1.0):
+                raise ValueError(f"Score out of range (0.0-1.0): {score}")
+
+                
+            # Return the valid score, clamped to a minimum of 0.3 as per original logic
+            return max(0.3, score)
+            
+        except json.JSONDecodeError as e:
+            print(f"Error parsing JSON response: {str(e)}. Response: '{content}'")
+            return 0.3 # Default score on JSON error
+        except KeyError:
+            print(f"Error: 'score' key not found in JSON response: '{json_str if 'json_str' in locals() else content}'")
+            return 0.3 # Default score if key is missing
         except (ValueError, TypeError) as e:
-            print(f"Error parsing score: {str(e)}")
-            return 0.3
+            print(f"Error validating score: {str(e)}. Response: '{json_str if 'json_str' in locals() else content}'")
+            return 0.3 # Default score on validation error
 
     async def _llm_evaluation(self, prompt: str, context: Dict, max_retries: int = 3) -> Dict[str, float]:
         """
@@ -86,7 +114,7 @@ class EnhancedFitnessEvaluator:
                 return self.client.chat.completions.create(
                     model=self.model_name,
                     messages=[
-                        {"role": "system", "content": "You are a prompt clarity evaluator. Score the clarity of the given prompt on a scale from 0.0 to 1.0. Consider:\n- Clear and unambiguous language\n- Well-structured sentences\n- Logical flow of ideas\n- Absence of confusing statements\nRespond with only a number between 0.0 and 1.0."},
+                        {"role": "system", "content": "You are a prompt clarity evaluator. Score the clarity of the given prompt on a scale from 0.00 to 1.00. Consider:\n- Clear and unambiguous language\n- Well-structured sentences\n- Logical flow of ideas\n- Absence of confusing statements\nRespond *only* with a JSON object containing the score rounded to two decimal places, like this: {\"score\": <float_value_between_0.00_and_1.00_rounded_to_2_decimal_places>}. Do not include any other text."},
                         {"role": "user", "content": prompt}
                     ],
                     temperature=0.0
@@ -96,7 +124,7 @@ class EnhancedFitnessEvaluator:
                 return self.client.chat.completions.create(
                     model=self.model_name,
                     messages=[
-                        {"role": "system", "content": "You are a prompt specificity evaluator. Score the specificity of the given prompt on a scale from 0.0 to 1.0. Consider:\n- Precise requirements\n- Detailed expectations\n- Concrete examples\n- Measurable outcomes\nRespond with only a number between 0.0 and 1.0."},
+                        {"role": "system", "content": "You are a prompt specificity evaluator. Score the specificity of the given prompt on a scale from 0.00 to 1.00. Consider:\n- Precise requirements\n- Detailed expectations\n- Concrete examples\n- Measurable outcomes\nRespond *only* with a JSON object containing the score rounded to two decimal places, like this: {\"score\": <float_value_between_0.00_and_1.00_rounded_to_2_decimal_places>}. Do not include any other text."},
                         {"role": "user", "content": prompt}
                     ],
                     temperature=0.0
@@ -106,7 +134,7 @@ class EnhancedFitnessEvaluator:
                 return self.client.chat.completions.create(
                     model=self.model_name,
                     messages=[
-                        {"role": "system", "content": "You are a technical validity evaluator. Score the technical soundness of the given prompt on a scale from 0.0 to 1.0. Consider:\n- Correct terminology\n- Feasible requirements\n- Logical constraints\n- Technical best practices\nRespond with only a number between 0.0 and 1.0."},
+                        {"role": "system", "content": "You are a technical validity evaluator. Score the technical soundness of the given prompt on a scale from 0.00 to 1.00. Consider:\n- Correct terminology\n- Feasible requirements\n- Logical constraints\n- Technical best practices\nRespond *only* with a JSON object containing the score rounded to two decimal places, like this: {\"score\": <float_value_between_0.00_and_1.00_rounded_to_2_decimal_places>}. Do not include any other text."},
                         {"role": "user", "content": prompt}
                     ],
                     temperature=0.0
@@ -117,7 +145,7 @@ class EnhancedFitnessEvaluator:
                 return self.client.chat.completions.create(
                     model=self.model_name,
                     messages=[
-                        {"role": "system", "content": "You are a context retention evaluator. Score how well the prompt maintains the provided context on a scale from 0.0 to 1.0. Consider:\n- Inclusion of key elements\n- Appropriate use of context\n- Maintenance of details\n- Relevance to context\nRespond with only a number between 0.0 and 1.0."},
+                        {"role": "system", "content": "You are a context retention evaluator. Score how well the prompt maintains the provided context on a scale from 0.00 to 1.00. Consider:\n- Inclusion of key elements\n- Appropriate use of context\n- Maintenance of details\n- Relevance to context\nRespond *only* with a JSON object containing the score rounded to two decimal places, like this: {\"score\": <float_value_between_0.00_and_1.00_rounded_to_2_decimal_places>}. Do not include any other text."},
                         {"role": "user", "content": f"Context:\n{context_info}\n\nPrompt:\n{prompt}"}
                     ],
                     temperature=0.0
@@ -127,7 +155,7 @@ class EnhancedFitnessEvaluator:
                 return self.client.chat.completions.create(
                     model=self.model_name,
                     messages=[
-                        {"role": "system", "content": "You are an effectiveness evaluator. Score the overall effectiveness of the given prompt on a scale from 0.0 to 1.0. Consider:\n- Likelihood of success\n- Balance of precision and flexibility\n- Practical applicability\n- Overall quality\nRespond with only a number between 0.0 and 1.0."},
+                        {"role": "system", "content": "You are an effectiveness evaluator. Score the overall effectiveness of the given prompt on a scale from 0.00 to 1.00. Consider:\n- Likelihood of success\n- Balance of precision and flexibility\n- Practical applicability\n- Overall quality\nRespond *only* with a JSON object containing the score rounded to two decimal places, like this: {\"score\": <float_value_between_0.00_and_1.00_rounded_to_2_decimal_places>}. Do not include any other text."},
                         {"role": "user", "content": prompt}
                     ],
                     temperature=0.0
@@ -137,7 +165,7 @@ class EnhancedFitnessEvaluator:
                 return self.client.chat.completions.create(
                     model=self.model_name,
                     messages=[
-                        {"role": "system", "content": "You are an innovation evaluator. Score the creativity and novelty of the given prompt on a scale from 0.0 to 1.0. Consider:\n- Novel approaches\n- Creative problem-solving\n- Unique combinations\n- Innovative language\nRespond with only a number between 0.0 and 1.0."},
+                        {"role": "system", "content": "You are an innovation evaluator. Score the creativity and novelty of the given prompt on a scale from 0.00 to 1.00. Consider:\n- Novel approaches\n- Creative problem-solving\n- Unique combinations\n- Innovative language\nRespond *only* with a JSON object containing the score rounded to two decimal places, like this: {\"score\": <float_value_between_0.00_and_1.00_rounded_to_2_decimal_places>}. Do not include any other text."},
                         {"role": "user", "content": prompt}
                     ],
                     temperature=0.0
@@ -148,7 +176,7 @@ class EnhancedFitnessEvaluator:
                 return self.client.chat.completions.create(
                     model=self.model_name,
                     messages=[
-                        {"role": "system", "content": "You are an intent alignment evaluator. Score how well the prompt aligns with the goals on a scale from 0.0 to 1.0. Consider:\n- Alignment with goals\n- Purpose fulfillment\n- Requirement adherence\n- Outcome achievement\nRespond with only a number between 0.0 and 1.0."},
+                        {"role": "system", "content": "You are an intent alignment evaluator. Score how well the prompt aligns with the goals on a scale from 0.00 to 1.00. Consider:\n- Alignment with goals\n- Purpose fulfillment\n- Requirement adherence\n- Outcome achievement\nRespond *only* with a JSON object containing the score rounded to two decimal places, like this: {\"score\": <float_value_between_0.00_and_1.00_rounded_to_2_decimal_places>}. Do not include any other text."},
                         {"role": "user", "content": f"Intent Information:\n{intent_info}\n\nPrompt:\n{prompt}"}
                     ],
                     temperature=0.0
@@ -169,110 +197,6 @@ class EnhancedFitnessEvaluator:
             print(f"LLM evaluation error: {str(e)}")
             # Return conservative scores on overall error
             return {metric: 0.3 for metric in self.metrics.get_all_metrics()}
-
-
-    # async def _llm_evaluation(self, prompt: str, context: Dict) -> Dict[str, float]:
-    #     """
-    #     Primary evaluation using LLM-based scoring.
-    #     Returns scores for each metric defined in UnifiedFitnessMetrics.
-    #     """
-    #     try:
-    #         # Extract intent analysis from context
-    #         intent_analysis = context.get('intent_analysis', {})
-            
-    #         # Evaluate clarity
-    #         response = self.client.chat.completions.create(
-    #             model=self.model_name,
-    #             messages=[
-    #                 {"role": "system", "content": "You are a prompt clarity evaluator. Score the clarity of the given prompt on a scale from 0.0 to 1.0. Consider:\n- Clear and unambiguous language\n- Well-structured sentences\n- Logical flow of ideas\n- Absence of confusing statements\nRespond with only a number between 0.0 and 1.0."},
-    #                 {"role": "user", "content": prompt}
-    #             ],
-    #             temperature=0.0
-    #         )
-    #         clarity = self._parse_score(response.choices[0].message.content)
-            
-    #         # Evaluate specificity
-    #         response = self.client.chat.completions.create(
-    #             model=self.model_name,
-    #             messages=[
-    #                 {"role": "system", "content": "You are a prompt specificity evaluator. Score the specificity of the given prompt on a scale from 0.0 to 1.0. Consider:\n- Precise requirements\n- Detailed expectations\n- Concrete examples\n- Measurable outcomes\nRespond with only a number between 0.0 and 1.0."},
-    #                 {"role": "user", "content": prompt}
-    #             ],
-    #             temperature=0.0
-    #         )
-    #         specificity = self._parse_score(response.choices[0].message.content)
-            
-    #         # Evaluate technical validity
-    #         response = self.client.chat.completions.create(
-    #             model=self.model_name,
-    #             messages=[
-    #                 {"role": "system", "content": "You are a technical validity evaluator. Score the technical soundness of the given prompt on a scale from 0.0 to 1.0. Consider:\n- Correct terminology\n- Feasible requirements\n- Logical constraints\n- Technical best practices\nRespond with only a number between 0.0 and 1.0."},
-    #                 {"role": "user", "content": prompt}
-    #             ],
-    #             temperature=0.0
-    #         )
-    #         technical = self._parse_score(response.choices[0].message.content)
-            
-    #         # Evaluate context retention
-    #         context_info = f"Keywords: {', '.join(intent_analysis.get('keywords', []))}\nContext: {intent_analysis.get('description', '')}"
-    #         response = self.client.chat.completions.create(
-    #             model=self.model_name,
-    #             messages=[
-    #                 {"role": "system", "content": "You are a context retention evaluator. Score how well the prompt maintains the provided context on a scale from 0.0 to 1.0. Consider:\n- Inclusion of key elements\n- Appropriate use of context\n- Maintenance of details\n- Relevance to context\nRespond with only a number between 0.0 and 1.0."},
-    #                 {"role": "user", "content": f"Context:\n{context_info}\n\nPrompt:\n{prompt}"}
-    #             ],
-    #             temperature=0.0
-    #         )
-    #         context_retention = self._parse_score(response.choices[0].message.content)
-            
-    #         # Evaluate effectiveness
-    #         response = self.client.chat.completions.create(
-    #             model=self.model_name,
-    #             messages=[
-    #                 {"role": "system", "content": "You are an effectiveness evaluator. Score the overall effectiveness of the given prompt on a scale from 0.0 to 1.0. Consider:\n- Likelihood of success\n- Balance of precision and flexibility\n- Practical applicability\n- Overall quality\nRespond with only a number between 0.0 and 1.0."},
-    #                 {"role": "user", "content": prompt}
-    #             ],
-    #             temperature=0.0
-    #         )
-    #         effectiveness = self._parse_score(response.choices[0].message.content)
-            
-    #         # Evaluate innovation
-    #         response = self.client.chat.completions.create(
-    #             model=self.model_name,
-    #             messages=[
-    #                 {"role": "system", "content": "You are an innovation evaluator. Score the creativity and novelty of the given prompt on a scale from 0.0 to 1.0. Consider:\n- Novel approaches\n- Creative problem-solving\n- Unique combinations\n- Innovative language\nRespond with only a number between 0.0 and 1.0."},
-    #                 {"role": "user", "content": prompt}
-    #             ],
-    #             temperature=0.0
-    #         )
-    #         innovation = self._parse_score(response.choices[0].message.content)
-            
-    #         # Evaluate intent alignment
-    #         intent_info = f"Goals: {intent_analysis.get('goals', '')}\nIntent: {intent_analysis.get('intent', '')}"
-    #         response = self.client.chat.completions.create(
-    #             model=self.model_name,
-    #             messages=[
-    #                 {"role": "system", "content": "You are an intent alignment evaluator. Score how well the prompt aligns with the goals on a scale from 0.0 to 1.0. Consider:\n- Alignment with goals\n- Purpose fulfillment\n- Requirement adherence\n- Outcome achievement\nRespond with only a number between 0.0 and 1.0."},
-    #                 {"role": "user", "content": f"Intent Information:\n{intent_info}\n\nPrompt:\n{prompt}"}
-    #             ],
-    #             temperature=0.0
-    #         )
-    #         intent_alignment = self._parse_score(response.choices[0].message.content)
-            
-    #         return {
-    #             'clarity': clarity,
-    #             'specificity': specificity,
-    #             'technical_validity': technical,
-    #             'context_retention': context_retention,
-    #             'effectiveness': effectiveness,
-    #             'innovation': innovation,
-    #             'intent_alignment': intent_alignment
-    #         }
-            
-    #     except Exception as e:
-    #         print(f"LLM evaluation error: {str(e)}")
-    #         # Return conservative scores on error
-    #         return {metric: 0.3 for metric in self.metrics.get_all_metrics()}
 
     def _rule_based_evaluation(self, prompt: str, context: Dict) -> Dict[str, float]:
         """

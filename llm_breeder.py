@@ -3,6 +3,7 @@ LLM Breeder module for using LLMs to perform breeding operations on prompts.
 """
 
 import json
+import re
 import asyncio
 from typing import List, Dict, Any, Tuple, Optional
 from dataclasses import dataclass
@@ -146,9 +147,13 @@ Return ONLY valid JSON with this format:
                     ]
                 )
                 
-                # Parse the JSON response
+                # Extract and parse the JSON response using regex
                 result_text = response.choices[0].message.content
-                result = json.loads(result_text)
+                match = re.search(r'\{.*?\}', result_text, re.DOTALL)
+                if not match:
+                    raise json.JSONDecodeError("No JSON object found in breeding response", result_text, 0)
+                json_str = match.group(0)
+                result = json.loads(json_str)
                 
                 # Create new individuals with the offspring prompts
                 child1 = Individual(strategy=self._create_strategy_from_parents(parent1, parent2, "offspring1"))
@@ -193,7 +198,14 @@ Return ONLY valid JSON with this format:
                     ]
                 )
                 
-                result = json.loads(response.choices[0].message.content)
+                # Extract and parse the JSON response using regex for simple breeding
+                result_text = response.choices[0].message.content
+                match = re.search(r'\{.*?\}', result_text, re.DOTALL)
+                if not match:
+                    raise json.JSONDecodeError("No JSON object found in simple breeding response", result_text, 0)
+                json_str = match.group(0)
+                result = json.loads(json_str)
+                
                 child1 = Individual(strategy=self._create_strategy_from_parents(parent1, parent2, "offspring1-simple"))
                 child2 = Individual(strategy=self._create_strategy_from_parents(parent2, parent1, "offspring2-simple"))
                 child1.prompt_result = result.get("offspring1")
