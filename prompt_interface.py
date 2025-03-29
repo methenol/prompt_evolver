@@ -102,7 +102,7 @@ class PromptEvolutionUI:
                     gr.update(value=cross_rate),
                     gr.update(value=tourn_size),
                     gr.update(value=elite_size),
-                    gr.update(value=llm_breed),
+                    gr.update(value=llm_breed, interactive=False),
                     gr.update(value=eval_type),
                     status_msg
                 )
