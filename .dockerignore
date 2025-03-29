@@ -1,0 +1,39 @@
+# Git files
+.git
+.gitignore
+.gitattributes
+
+# Docker files
+.dockerignore
+Dockerfile
+docker-compose.yaml
+
+# Environment files
+.env
+.env.*
+*.env
+
+# Python cache and virtual environments
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+.conda/
+
+# Output directory (handled by Gradio downloads, not needed in image)
+output/
+
+# IDE/Editor specific files
+.vscode/
+.idea/
+
+# OS specific files
+.DS_Store
+Thumbs.db

@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  prompt-evolver:
+    # Build the image from the Dockerfile in the current directory
+    build: .
+    # Name the container for easier identification (optional)
+    container_name: prompt_evolver_app
+    # Map the host port 7860 to the container port 7860 exposed in the Dockerfile
+    ports:
+      - "7860:7860"
+    # Load environment variables from a .env file located in the same directory
+    # This allows configuring API keys, model names, etc., without hardcoding
+    env_file:
+      - .env
+    # Keep the container running even if the main process exits (useful for debugging)
+    # restart: unless-stopped # Optional: uncomment if you want it to restart automatically

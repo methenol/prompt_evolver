@@ -58,9 +58,49 @@ The interface provides the same capabilities as the command line version but wit
 - Adjust settings without remembering command line arguments
 - Monitor the evolution process in real-time
 
+## Running with Docker
+
+Alternatively, you can run the Prompt Evolver interface using Docker and Docker Compose. This simplifies setup by managing dependencies within a container.
+
+### Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/) installed on your system.
+- [Docker Compose](https://docs.docker.com/compose/install/) (usually included with Docker Desktop).
+
+### Configuration
+
+1.  **Create Environment File:** Copy the example environment file to create your own:
+    ```bash
+    cp .env.example .env
+    ```
+2.  **Set API Key:** Edit the `.env` file and add your `API_KEY`.
+3.  **Optional Settings:** You can configure *all* settings found in `config.py` (like `MODEL_NAME`, `BASE_URL`, `POPULATION_SIZE`, etc.) by setting the corresponding environment variables in the `.env` file. These values will override the defaults when running via Docker.
+
+### Running the Application
+
+1.  **Build and Start:** Open a terminal in the project's root directory and run:
+    ```bash
+    docker-compose up -d
+    ```
+    This command will build the Docker image (if it doesn't exist) and start the container in the background.
+
+2.  **Access the Interface:** Open your web browser and navigate to:
+    `http://localhost:7860`
+
+### Stopping the Application
+
+To stop and remove the container, run:
+```bash
+docker-compose down
+```
+
+### Output Files
+
+When the evolution process completes within the Docker container, you can download the resulting files (like `evolution_state_final.json` and `fitness_history_final.png`) directly from the Gradio web interface. The `output/` directory inside the container is not persisted on your host machine.
+
 ## Configuration
 
-Before running the application, make sure you have:
+Before running the application (without Docker), make sure you have:
 
 1. Create a .env file or rename .env.example
 2. Set up your OpenAI API key in an environment variable or in the .env file
@@ -118,7 +158,7 @@ python main_evolve.py --load ./output/evolution_state_gen_10.json
 
 ## Output Files
 
-The system saves various files to the output directory:
+The system saves various files to the output directory (when run without Docker):
 
 - `evolution_state_gen_X.json`: Evolution state after X generations
 - `evolution_state_final.json`: Final evolution state
