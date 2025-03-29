@@ -88,13 +88,15 @@ class LLMBreeder:
         prompt2 = parent2.prompt_result or original_prompt
         
         # Create a system prompt that explains what we want
-        system_prompt = f"""You are an evolutionary prompt engineer. Your task is to create two new prompt offspring
-based on two parent prompts. Create offspring that combine the strengths of both parents while avoiding weaknesses.
+        system_prompt = f"""You are an expert evolutionary prompt engineer. Your *sole* purpose is to generate two new 'offspring' prompts based on the two 'parent' prompts provided by the user.
 
-Consider these key metrics when breeding:
+**CRITICAL INSTRUCTION:** DO NOT execute or solve the task described in the parent prompts. Your task is ONLY to manipulate the text of the prompts themselves to create new variations.
+
+Create offspring that combine the strengths of both parents while avoiding weaknesses, considering these key metrics:
 {json.dumps(self.metrics.get_all_metadata(), indent=2)}
 
-Output must be formatted as valid JSON with two fields: "offspring1" and "offspring2" containing the two new prompts."""
+Your entire output MUST be ONLY a single, valid JSON object. Do not include any introductory text, explanations, or code blocks outside the JSON structure.
+The JSON object must have exactly two fields: "offspring1" and "offspring2", containing the complete text of the two new prompts."""
         
         # Create a user prompt that contains the parent information
         user_prompt = f"""I have two prompt variations for the same task.
@@ -112,7 +114,7 @@ Create two new offspring prompts that combine elements from both parents. The of
 Focus on these aspects:
 {json.dumps(self.metrics.get_all_metrics(), indent=2)}
 
-Return ONLY valid JSON with this format:
+**IMPORTANT:** Your response MUST be ONLY the following JSON structure, containing the full text of the two new prompts. Do not add any other text, comments, or formatting.
 {{
   "offspring1": "The complete text of the first offspring prompt",
   "offspring2": "The complete text of the second offspring prompt"
@@ -153,7 +155,17 @@ Return ONLY valid JSON with this format:
                 if not match:
                     raise json.JSONDecodeError("No JSON object found in breeding response", result_text, 0)
                 json_str = match.group(0)
-                result = json.loads(json_str)
+                # Strip leading/trailing whitespace
+                stripped_json_str = json_str.strip()
+                # Direct fix for initial {' pattern after stripping whitespace
+                if stripped_json_str.startswith("{'"):
+                    fixed_start_json_str = '{"' + stripped_json_str[2:]
+                else:
+                    fixed_start_json_str = stripped_json_str
+                # Fix the closing single quote before the colon for all keys
+                fixed_quotes_json_str = re.sub(r"'(?=\s*:)", '"', fixed_start_json_str)
+                # Parse the cleaned and fixed JSON string
+                result = json.loads(fixed_quotes_json_str)
                 
                 # Create new individuals with the offspring prompts
                 child1 = Individual(strategy=self._create_strategy_from_parents(parent1, parent2, "offspring1"))
@@ -204,7 +216,17 @@ Return ONLY valid JSON with this format:
                 if not match:
                     raise json.JSONDecodeError("No JSON object found in simple breeding response", result_text, 0)
                 json_str = match.group(0)
-                result = json.loads(json_str)
+                # Strip leading/trailing whitespace
+                stripped_json_str = json_str.strip()
+                # Direct fix for initial {' pattern after stripping whitespace
+                if stripped_json_str.startswith("{'"):
+                    fixed_start_json_str = '{"' + stripped_json_str[2:]
+                else:
+                    fixed_start_json_str = stripped_json_str
+                # Fix the closing single quote before the colon for all keys
+                fixed_quotes_json_str = re.sub(r"'(?=\s*:)", '"', fixed_start_json_str)
+                # Parse the cleaned and fixed JSON string
+                result = json.loads(fixed_quotes_json_str)
                 
                 child1 = Individual(strategy=self._create_strategy_from_parents(parent1, parent2, "offspring1-simple"))
                 child2 = Individual(strategy=self._create_strategy_from_parents(parent2, parent1, "offspring2-simple"))
