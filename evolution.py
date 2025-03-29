@@ -4,6 +4,7 @@ Evolution module for managing the evolutionary process.
 
 import os
 import json
+import copy # Added for deep copying
 import asyncio
 import random
 import statistics
@@ -38,7 +39,8 @@ class Evolution:
         self.population: Optional[Population] = None
         self.original_prompt: Optional[str] = None # Added
         self.generation = 0
-        self.best_individual: Optional[Individual] = None
+        self.best_individual: Optional[Individual] = None # Tracks the reference to the best object found so far
+        self.peak_individual_state: Optional[Dict[str, Any]] = None # Stores the state of the best individual at its peak
         self.history: List[Dict[str, Any]] = []
         self.output_dir = output_dir
         self.save_frequency = save_frequency
@@ -132,20 +134,26 @@ class Evolution:
             )
             current_best_fitness = current_best.fitness.get("overall", 0)
             
+            
             # Update best individual if improved
             if self.best_individual is None or current_best_fitness > best_fitness:
+                # Update the reference and the peak fitness value
                 self.best_individual = current_best
                 best_fitness = current_best_fitness
-                print(f"\nNew best individual found: {self.best_individual}")
-                print(f"Fitness: {best_fitness:.4f}")
+                # Store the *state* of this peak individual
+                self.peak_individual_state = copy.deepcopy(current_best.to_json())
                 
-                # Save the best individual's result
+                print(f"\nNew best individual state recorded (Gen {self.generation}):")
+                print(f"  ID: {self.peak_individual_state['id'][:8]}")
+                print(f"  Fitness: {best_fitness:.4f}")
+                print(f"  Strategy: {self.peak_individual_state['strategy']['name']}")
+
+                # Save the best individual's result (using the peak state)
                 with open(os.path.join(self.output_dir, f"best_prompt_gen_{self.generation}.txt"), "w") as f:
                     f.write(f"# Best Prompt from Generation {self.generation}\n")
                     f.write(f"# Fitness: {best_fitness:.4f}\n")
-                    f.write(f"# Strategy: {self.best_individual.strategy.name}\n\n")
-                    f.write(self.best_individual.prompt_result or "")
-            
+                    f.write(f"# Strategy: {self.peak_individual_state['strategy']['name']}\n\n")
+                    f.write(self.peak_individual_state.get('prompt_result', "") or "")
             # Log stats for this generation
             self._log_generation_stats()
             
@@ -185,25 +193,60 @@ class Evolution:
         )
         final_best_fitness = final_best.fitness.get("overall", 0)
         
+        # Check if the best after final eval is better than the historical best
         if final_best_fitness > best_fitness:
-            self.best_individual = final_best
-            best_fitness = final_best_fitness
-        
+            self.best_individual = final_best # Update reference if needed
+            best_fitness = final_best_fitness # Update peak fitness value
+            # Store the state of this new peak individual
+            self.peak_individual_state = copy.deepcopy(final_best.to_json())
+            print(f"\nNew best individual state recorded after final evaluation:")
+            print(f"  ID: {self.peak_individual_state['id'][:8]}")
+            print(f"  Fitness: {best_fitness:.4f}")
+            print(f"  Strategy: {self.peak_individual_state['strategy']['name']}")
+        elif not self.peak_individual_state and self.best_individual:
+             # Handle edge case: if no peak was recorded during loop (e.g., 1 gen run)
+             # but a best exists after final eval, record it now.
+             self.peak_individual_state = copy.deepcopy(self.best_individual.to_json())
+
         print("\n--- Evolution Complete ---")
-        print(f"Best Individual: {self.best_individual}")
+        # Report based on the recorded peak state
+        if self.peak_individual_state:
+            print(f"Overall Best Individual (State Recorded at Peak):")
+            print(f"  ID: {self.peak_individual_state['id'][:8]}")
+            print(f"  Generation Found: {self.peak_individual_state['generation']}")
+            print(f"  Strategy: {self.peak_individual_state['strategy']['name']}")
+            print(f"  Peak Fitness: {best_fitness:.4f}") # Use the tracked best_fitness
+        else:
+             print("No best individual recorded.") # Should not happen in normal runs
         print(f"Best Fitness: {best_fitness:.4f}")
         
         # Save final results
         self.save_state(os.path.join(self.output_dir, "evolution_state_final.json"))
         self.visualize_fitness_history(os.path.join(self.output_dir, "fitness_history_final.png"))
         
-        with open(os.path.join(self.output_dir, "best_prompt_final.txt"), "w") as f:
-            f.write(f"# Best Prompt (Final)\n")
-            f.write(f"# Fitness: {best_fitness:.4f}\n")
-            f.write(f"# Strategy: {self.best_individual.strategy.name}\n\n")
-            f.write(self.best_individual.prompt_result or "")
+        # Save the peak state information to the final file
+        if self.peak_individual_state:
+            with open(os.path.join(self.output_dir, "best_prompt_final.txt"), "w") as f:
+                f.write(f"# Best Prompt (Final - State Recorded at Peak)\n")
+                # Use the tracked best_fitness, as the score in peak_state might be slightly different due to float precision
+                f.write(f"# Peak Fitness: {best_fitness:.4f}\n")
+                f.write(f"# Strategy: {self.peak_individual_state['strategy']['name']}\n")
+                f.write(f"# Generation Found: {self.peak_individual_state['generation']}\n\n")
+                f.write(self.peak_individual_state.get('prompt_result', "") or "")
+        else:
+             print("Warning: No peak individual state recorded to save to best_prompt_final.txt")
         
-        return self.best_individual
+        # Return an Individual object reconstructed from the peak state
+        if self.peak_individual_state:
+            # Reconstruct the Individual from the stored JSON state
+            peak_individual = Individual.from_json(self.peak_individual_state)
+            # Ensure the fitness reflects the actual peak score tracked
+            peak_individual.fitness['overall'] = best_fitness
+            return peak_individual
+        else:
+            # Fallback: return the last known best_individual reference if no peak state was ever recorded
+            # This might happen in very short runs or if loading a state without peak info
+            return self.best_individual
     
     async def _initialize_population_with_llm(self, original_prompt: str) -> None:
         """Initialize the population with LLM-generated prompts."""
@@ -425,7 +468,8 @@ class Evolution:
             "original_prompt": self.original_prompt, # Added
             "population": self.population.to_json(),
             "history": self.history,
-            "best_individual": self.best_individual.to_json() if self.best_individual else None
+            "best_individual": self.best_individual.to_json() if self.best_individual else None, # Keep reference for potential resume logic
+            "peak_individual_state": self.peak_individual_state # Save the peak state
         }
 
         try:
@@ -456,6 +500,9 @@ class Evolution:
             if best_individual_data:
                 self.best_individual = Individual.from_json(best_individual_data)
             
+            # Load the peak state as well
+            self.peak_individual_state = state.get("peak_individual_state")
+
             print(f"Evolution state loaded from {filepath}")
             return True
         except Exception as e:
