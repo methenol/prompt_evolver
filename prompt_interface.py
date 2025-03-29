@@ -196,23 +196,30 @@ class PromptEvolutionUI:
 
             # Define expected output file paths
             state_file_path = os.path.join(output_dir, "evolution_state_final.json")
-            plot_file_path = os.path.join(output_dir, "fitness_history_final.png")
+            plot_file_path = os.path.join(output_dir, "fitness_history_final.png") # Keep potential path
 
-            # Check if files exist, set to None if not
+            # Check state file existence
             if not os.path.exists(state_file_path):
                 print(f"Warning: Expected state file not found at {state_file_path}")
                 state_file_path = None
-            if not os.path.exists(plot_file_path):
-                print(f"Warning: Expected plot file not found at {plot_file_path}")
-                plot_file_path = None
 
-            return (enhanced_prompt, status_text, state_file_path, plot_file_path)
+            # Prepare image update based on plot file existence
+            if os.path.exists(plot_file_path):
+                print(f"Plot file found at {plot_file_path}, preparing image update.")
+                image_update = gr.update(value=plot_file_path, visible=True)
+            else:
+                print(f"Warning: Expected plot file not found at {plot_file_path}")
+                plot_file_path = None # Set to None for file download component if not found
+                image_update = gr.update(visible=False) # Keep hidden if no plot
+
+            return (enhanced_prompt, status_text, state_file_path, plot_file_path, image_update)
 
         except Exception as e:
             print(f"Error during evolution: {str(e)}")
             traceback.print_exc() # Print detailed traceback
             error_message = f"Error occurred during evolution: {str(e)}"
-            return ("", error_message, None, None)
+            # Ensure image is hidden on error
+            return ("", error_message, None, None, gr.update(visible=False))
 
     def create_interface(self):
         with gr.Blocks() as interface:
@@ -302,6 +309,16 @@ class PromptEvolutionUI:
                         label="Fitness Plot (.png)",
                         interactive=False
                         )
+                # End of second column
+
+            # --- Output Image Display (Full Width, Initially Hidden) ---
+            # Place this *after* the main Row, but before event handlers
+            output_plot_display = gr.Image(
+                label="Fitness Evolution Plot",
+                type="filepath",
+                interactive=False,
+                visible=False # Initially hidden
+            )
 
             # --- Event Handlers ---
             # Handle state loading
@@ -340,11 +357,12 @@ class PromptEvolutionUI:
                     output_prompt,
                     status_output,
                     output_state_file,
-                    output_plot_file
-                    ]
+                    output_plot_file,
+                    output_plot_display
+                ]
             )
-
-        return interface
+        
+        return interface # This should be correctly indented already
 
 def main():
     parser = argparse.ArgumentParser(description='Prompt Evolution Interface')
