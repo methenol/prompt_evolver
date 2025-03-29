@@ -3,6 +3,7 @@ FitnessEvaluator module for evaluating the fitness of prompt enhancement strateg
 """
 
 import asyncio
+import re
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 
@@ -41,10 +42,37 @@ class FitnessEvaluator:
         self.strategy = FitnessEvaluationStrategy(client=client)
         self.history = EvolutionHistory()
         self.validator = CrossValidator(client=client)
+
+    def _clean_llm_output(self, text: str, original_prompt: str) -> str:
+        """Cleans common LLM artifacts like preambles and original prompt repetition."""
+        cleaned_text = text.strip()
+        original_prompt_stripped = original_prompt.strip()
+
+        # 1. Remove markdown code fences (optional language specifier)
+        cleaned_text = re.sub(r'^```[a-zA-Z]*\n?', '', cleaned_text)
+        cleaned_text = re.sub(r'\n?```$', '', cleaned_text)
+        cleaned_text = cleaned_text.strip() # Strip again after removing fences
+
+        # 2. Remove common prefixes (case-insensitive, optional colon/whitespace)
+        # Covers "Enhanced Prompt:", "Adjusted Prompt:", "Revised Prompt:", "Mutated Prompt:", "Original:", etc.
+        cleaned_text = re.sub(r'^(?:enhanced|adjusted|revised|mutated|original)\s*prompt\s*[:\-]?\s*', '', cleaned_text, flags=re.IGNORECASE).strip()
+
+        # 3. Attempt to remove the original prompt if it's prepended
+        # Be careful not to remove it if the LLM *only* returned the original
+        if cleaned_text.startswith(original_prompt_stripped):
+            potential_mutation = cleaned_text[len(original_prompt_stripped):].strip()
+            # Only remove the original if there's something substantial after it
+            if len(potential_mutation) > 10: # Heuristic: require at least 10 chars difference
+                 cleaned_text = potential_mutation
+
+        # 4. Remove simple "Original:" prefix if step 2/3 missed it
+        cleaned_text = re.sub(r'^Original\s*[:\-]?\s*', '', cleaned_text, flags=re.IGNORECASE).strip()
+
+        return cleaned_text
         
     async def evaluate_population(
-        self, 
-        population: Population, 
+        self,
+        population: Population,
         original_prompt: str,
         intent_analysis: Dict[str, Any]
     ) -> None:
@@ -271,7 +299,8 @@ class FitnessEvaluator:
                 completion_args["presence_penalty"] = strategy.presence_penalty
             
             response = self.client.chat.completions.create(**completion_args)
-            enhanced = response.choices[0].message.content.strip()
+            raw_enhanced = response.choices[0].message.content.strip()
+            enhanced = self._clean_llm_output(raw_enhanced, prompt) # Clean the output
             
             # Apply additional processing based on strategy flags
             if strategy.semantic_check:
@@ -317,7 +346,9 @@ class FitnessEvaluator:
             }
             
             response = self.client.chat.completions.create(**completion_args)
-            return response.choices[0].message.content.strip()
+            raw_restored = response.choices[0].message.content.strip()
+            # Use 'original' prompt context for cleaning here
+            return self._clean_llm_output(raw_restored, original)
         except Exception as e:
             print(f"Error in semantic restoration: {str(e)}")
             return current
@@ -347,7 +378,9 @@ class FitnessEvaluator:
                     """}
                 ]
             )
-            return response.choices[0].message.content.strip()
+            raw_preserved = response.choices[0].message.content.strip()
+            # Use 'original' prompt context for cleaning here
+            return self._clean_llm_output(raw_preserved, original)
         except Exception as e:
             print(f"Error in context preservation: {str(e)}")
             return current
