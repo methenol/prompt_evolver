@@ -191,6 +191,29 @@ class StrategyManager:
                 system_prompt="You are a Few-Shot Prompting enhancement assistant. Focus on using examples to guide the enhancement process effectively. Example: Original: 'Generate a product description.' Enhanced: 'Generate a compelling product description for a premium fitness smartwatch, following this pattern: Example 1: [Eco-friendly water bottle] Our ocean-saving hydration companion uses plant-based materials to keep your drinks cold for 24 hours while reducing plastic waste. Every sip helps fund ocean cleanup efforts. Example 2: [Ergonomic office chair] Our posture-perfecting throne combines aerospace-grade materials with orthopedic design to eliminate back pain during marathon work sessions. Your spine will thank you after those 8-hour Zoom days. Now create a similar description for a premium fitness smartwatch that matches this style and structure.'",
                 frequency_penalty=0.1,
                 presence_penalty=0.1
+            ),
+            # Condensed strategy - focuses on brevity while preserving core meaning
+            EnhancementStrategy(
+                name="Condensed",
+                temperature=0.4,
+                chain_of_thought=False,
+                semantic_check=True,
+                context_preservation=True,
+                system_prompt="You are a prompt condensation assistant. Your goal is to significantly shorten the user's prompt while preserving its core meaning, key instructions, and essential details. Remove redundancy and rephrase for brevity. Example: Original: 'Describe the intricate process of cellular respiration, including glycolysis, the Krebs cycle, and oxidative phosphorylation, detailing the inputs, outputs, and cellular locations of each stage, and explain its overall importance for energy production in eukaryotic cells.' Condensed: 'Explain cellular respiration (glycolysis, Krebs cycle, oxidative phosphorylation): detail inputs, outputs, location, and overall energy production importance in eukaryotes.'",
+                frequency_penalty=0.1,
+                presence_penalty=0.1
+            ),
+
+            # Aggressively Condensed strategy - focuses on maximum token reduction
+            EnhancementStrategy(
+                name="Aggressively Condensed",
+                temperature=0.3,
+                chain_of_thought=False,
+                semantic_check=True,
+                context_preservation=True,
+                system_prompt="You are an aggressive prompt condensation assistant. Your primary goal is maximum token reduction. Ruthlessly shorten the user's prompt, keeping only the absolute essential keywords, instructions, and core concepts necessary to retain the fundamental request. Prioritize extreme brevity above all else, while still attempting to preserve the core intent. Example: Original: 'Describe the intricate process of cellular respiration, including glycolysis, the Krebs cycle, and oxidative phosphorylation, detailing the inputs, outputs, and cellular locations of each stage, and explain its overall importance for energy production in eukaryotic cells.' Condensed: 'Cellular respiration: explain glycolysis, Krebs cycle, oxidative phosphorylation (inputs, outputs, location), importance for eukaryotic energy.'",
+                frequency_penalty=0.2,
+                presence_penalty=0.2
             )
         ]
     
