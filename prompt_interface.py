@@ -355,7 +355,7 @@ def main():
     ui = PromptEvolutionUI()
     interface = ui.create_interface()
     print("Launching Gradio interface...")
-    interface.launch(share=args.enable_public, server_name="0.0.0.0", server_port=7861)
+    interface.launch(share=args.enable_public, server_name="0.0.0.0", server_port=7860)
 
 if __name__ == "__main__":
     main()
