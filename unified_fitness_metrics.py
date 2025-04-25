@@ -3,15 +3,15 @@ class UnifiedFitnessMetrics:
     A class that implements standardized weights and validation for fitness metrics
     in the prompt evolution system.
     """
-    
+
     CORE_METRICS = {
-        'clarity': 0.20,         # Clear and understandable
-        'specificity': 0.20,     # Detailed and precise
+        'clarity': 0.15,         # Clear and understandable
+        'specificity': 0.15,     # Detailed and precise
         'intent_alignment': 0.20, # Matches original purpose
         'effectiveness': 0.15,    # Likely to achieve goal
-        'innovation': 0.10,      # Introduces improvements
+        'innovation': 0.05,      # Introduces improvements
         'technical_validity': 0.10, # Structurally sound
-        'context_retention': 0.05  # Maintains context
+        'context_retention': 0.20  # Maintains context - increased from 0.05 to 0.20
     }
 
     def __init__(self):
@@ -59,9 +59,9 @@ class UnifiedFitnessMetrics:
                 'example_low': 'Poor structure or technical inaccuracies'
             },
             'context_retention': {
-                'description': 'Ability to maintain relevant context',
-                'example_high': 'Preserves and utilizes important contextual information',
-                'example_low': 'Loses or ignores critical context'
+                'description': 'Ability to maintain relevant context, structure, and critical instructions',
+                'example_high': 'Preserves all important sections, instructions, and structural elements while maintaining contextual information',
+                'example_low': 'Loses critical sections, instructions, or structural elements from the original prompt'
             }
         }
 

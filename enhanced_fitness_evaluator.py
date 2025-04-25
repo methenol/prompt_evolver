@@ -23,7 +23,7 @@ class EnhancedFitnessEvaluator:
         """Initialize the evaluator with required OpenAI client."""
         if not client:
             raise ValueError("OpenAI client is required")
-        
+
         self.client = client
         self.model_name = default_config.model_name
         self.metrics = UnifiedFitnessMetrics()
@@ -36,26 +36,26 @@ class EnhancedFitnessEvaluator:
             match = re.search(r'\{.*?\}', content, re.DOTALL)
             if not match:
                 raise json.JSONDecodeError("No JSON object found in response", content, 0)
-                
+
             json_str = match.group(0)
-            
+
             # Attempt to parse the extracted JSON string
             data = json.loads(json_str)
-            
+
             # Extract the score
             score = data['score']
-            
+
             # Convert score to float and validate range
             # Removed isinstance check to allow string scores like "0.83"
             score = float(score) # Attempt conversion
-            
+
             if not (0.0 <= score <= 1.0):
                 raise ValueError(f"Score out of range (0.0-1.0): {score}")
 
-                
+
             # Return the valid score, clamped to a minimum of 0.3 as per original logic
             return max(0.3, score)
-            
+
         except json.JSONDecodeError as e:
             print(f"Error parsing JSON response: {str(e)}. Response: '{content}'")
             return 0.3 # Default score on JSON error
@@ -70,7 +70,7 @@ class EnhancedFitnessEvaluator:
         """
         Primary evaluation using LLM-based scoring with retry mechanism.
         Returns scores for each metric defined in UnifiedFitnessMetrics.
-        
+
         :param prompt: The prompt to evaluate
         :param context: Context dictionary containing intent analysis
         :param max_retries: Maximum number of retries for each LLM call
@@ -79,7 +79,7 @@ class EnhancedFitnessEvaluator:
         def _safe_get_score(evaluation_func):
             """
             Wrapper to retry LLM scoring with error handling
-            
+
             :param evaluation_func: Function that performs LLM call and scoring
             :return: Parsed score or default score on failure
             """
@@ -87,28 +87,28 @@ class EnhancedFitnessEvaluator:
                 try:
                     response = evaluation_func()
                     score = self._parse_score(response.choices[0].message.content)
-                    
+
                     # Validate score is between 0.0 and 1.0
                     if 0.0 <= score <= 1.0:
                         return score
-                    
+
                     # If score is invalid, continue to retry
                     raise ValueError(f"Invalid score: {score}")
-                
+
                 except (ValueError, Exception) as e:
                     print(f"Scoring attempt {attempt + 1} failed: {str(e)}")
-                    
+
                     # If this was the last retry, return a conservative default
                     if attempt == max_retries - 1:
                         return 0.3
-            
+
             # Fallback return (should not normally be reached)
             return 0.3
 
         try:
             # Extract intent analysis from context
             intent_analysis = context.get('intent_analysis', {})
-            
+
             # Scoring functions for each metric
             def clarity_eval():
                 return self.client.chat.completions.create(
@@ -119,7 +119,7 @@ class EnhancedFitnessEvaluator:
                     ],
                     temperature=0.0
                 )
-            
+
             def specificity_eval():
                 return self.client.chat.completions.create(
                     model=self.model_name,
@@ -129,7 +129,7 @@ class EnhancedFitnessEvaluator:
                     ],
                     temperature=0.0
                 )
-            
+
             def technical_eval():
                 return self.client.chat.completions.create(
                     model=self.model_name,
@@ -139,7 +139,7 @@ class EnhancedFitnessEvaluator:
                     ],
                     temperature=0.0
                 )
-            
+
             def context_retention_eval():
                 context_info = f"Keywords: {', '.join(intent_analysis.get('keywords', []))}\nContext: {intent_analysis.get('description', '')}"
                 return self.client.chat.completions.create(
@@ -150,7 +150,7 @@ class EnhancedFitnessEvaluator:
                     ],
                     temperature=0.0
                 )
-            
+
             def effectiveness_eval():
                 return self.client.chat.completions.create(
                     model=self.model_name,
@@ -160,7 +160,7 @@ class EnhancedFitnessEvaluator:
                     ],
                     temperature=0.0
                 )
-            
+
             def innovation_eval():
                 return self.client.chat.completions.create(
                     model=self.model_name,
@@ -170,7 +170,7 @@ class EnhancedFitnessEvaluator:
                     ],
                     temperature=0.0
                 )
-            
+
             def intent_alignment_eval():
                 intent_info = f"Goals: {intent_analysis.get('goals', '')}\nIntent: {intent_analysis.get('intent', '')}"
                 return self.client.chat.completions.create(
@@ -181,18 +181,37 @@ class EnhancedFitnessEvaluator:
                     ],
                     temperature=0.0
                 )
-            
-            # Perform evaluations with retry mechanism
+
+            # Define async wrapper for _safe_get_score
+            async def async_safe_get_score(evaluation_func):
+                return _safe_get_score(evaluation_func)
+
+            # Run all evaluations concurrently
+            clarity_task = asyncio.create_task(async_safe_get_score(clarity_eval))
+            specificity_task = asyncio.create_task(async_safe_get_score(specificity_eval))
+            technical_task = asyncio.create_task(async_safe_get_score(technical_eval))
+            context_task = asyncio.create_task(async_safe_get_score(context_retention_eval))
+            effectiveness_task = asyncio.create_task(async_safe_get_score(effectiveness_eval))
+            innovation_task = asyncio.create_task(async_safe_get_score(innovation_eval))
+            intent_task = asyncio.create_task(async_safe_get_score(intent_alignment_eval))
+
+            # Wait for all tasks to complete
+            await asyncio.gather(
+                clarity_task, specificity_task, technical_task, context_task,
+                effectiveness_task, innovation_task, intent_task
+            )
+
+            # Return results
             return {
-                'clarity': _safe_get_score(clarity_eval),
-                'specificity': _safe_get_score(specificity_eval),
-                'technical_validity': _safe_get_score(technical_eval),
-                'context_retention': _safe_get_score(context_retention_eval),
-                'effectiveness': _safe_get_score(effectiveness_eval),
-                'innovation': _safe_get_score(innovation_eval),
-                'intent_alignment': _safe_get_score(intent_alignment_eval)
+                'clarity': clarity_task.result(),
+                'specificity': specificity_task.result(),
+                'technical_validity': technical_task.result(),
+                'context_retention': context_task.result(),
+                'effectiveness': effectiveness_task.result(),
+                'innovation': innovation_task.result(),
+                'intent_alignment': intent_task.result()
             }
-            
+
         except Exception as e:
             print(f"LLM evaluation error: {str(e)}")
             # Return conservative scores on overall error
@@ -203,18 +222,18 @@ class EnhancedFitnessEvaluator:
         Backup evaluation using rule-based metrics.
         """
         scores = {}
-        
+
         # Clarity score based on sentence structure and length
         words = prompt.split()
         sentences = max(1, prompt.count('.') + prompt.count('!') + prompt.count('?'))
         avg_words_per_sentence = len(words) / sentences
         clarity_score = min(1.0, 2.0 / (1.0 + 0.1 * abs(avg_words_per_sentence - 15)))
-        
+
         # Specificity score based on presence of specific details
         detail_keywords = ['specifically', 'exactly', 'precisely', 'must', 'required']
-        specificity_score = min(1.0, sum(word.lower() in prompt.lower() 
+        specificity_score = min(1.0, sum(word.lower() in prompt.lower()
                                        for word in detail_keywords) / 3.0)
-        
+
         # Technical validity score based on structure
         has_context = 'context' in prompt.lower() or 'background' in prompt.lower()
         has_requirements = 'require' in prompt.lower() or 'need' in prompt.lower()
@@ -223,7 +242,7 @@ class EnhancedFitnessEvaluator:
 
         # Context retention score
         context_keywords = context.get('keywords', [])
-        retained_context = sum(keyword.lower() in prompt.lower() 
+        retained_context = sum(keyword.lower() in prompt.lower()
                              for keyword in context_keywords)
         context_score = min(1.0, retained_context / max(1, len(context_keywords)))
 
@@ -254,12 +273,12 @@ class EnhancedFitnessEvaluator:
             # Get scores with minimum fallback of 0.1
             llm_score = llm_scores.get(metric, 0.1)
             rule_score = rule_scores.get(metric, 0.1)
-            
+
             # Use weighted average favoring the higher score
             max_score = max(llm_score, rule_score)
             min_score = min(llm_score, rule_score)
             aggregated_scores[metric] = (max_score * 0.7) + (min_score * 0.3)
-            
+
             # Ensure minimum score of 0.1
             aggregated_scores[metric] = max(0.1, aggregated_scores[metric])
 
@@ -280,40 +299,23 @@ class EnhancedFitnessEvaluator:
         if default_config.evaluation_type in ["rule", "combined"]:
             rule_scores = self._rule_based_evaluation(prompt, context)
 
-        # Aggregate if combined
+        # Aggregate scores based on evaluation type
         if default_config.evaluation_type == "combined":
             final_scores = self._aggregate_scores(llm_scores, rule_scores)
-
-        # Aggregate individual metric scores
-        final_scores = self._aggregate_scores(llm_scores, rule_scores)
+        elif default_config.evaluation_type == "llm":
+            final_scores = llm_scores
+        else:  # "rule"
+            final_scores = rule_scores
 
         # Calculate weighted overall score using metric weights from UnifiedFitnessMetrics
         weights = self.metrics.get_all_metrics()
         weighted_sum = 0.0
         total_weight = 0.0
 
+        # Calculate weighted sum based on final_scores
         for metric, weight in weights.items():
             if metric in final_scores:
                 weighted_sum += final_scores[metric] * weight
-                total_weight += weight
-
-        # Determine which scores to use based on evaluation_type
-        if default_config.evaluation_type == "llm":
-            # Only LLM scores were calculated (or should have been)
-            scores_to_use = llm_scores
-        elif default_config.evaluation_type == "rule":
-            # Only rule scores were calculated (or should have been)
-            scores_to_use = rule_scores
-        else: # "combined"
-            # Both were calculated, use the aggregated scores
-            scores_to_use = final_scores
-
-        # Recalculate weighted sum and total weight based on the chosen scores
-        weighted_sum = 0.0
-        total_weight = 0.0
-        for metric, weight in weights.items():
-            if metric in scores_to_use:
-                weighted_sum += scores_to_use[metric] * weight
                 total_weight += weight
 
         # Calculate overall score, ensuring it's never zero
@@ -321,18 +323,18 @@ class EnhancedFitnessEvaluator:
             overall_score = weighted_sum / total_weight
         else:
             # Fallback to simple average if weights are missing
-            overall_score = sum(scores_to_use.values()) / len(scores_to_use) if scores_to_use else 0.3
+            overall_score = sum(final_scores.values()) / len(final_scores) if final_scores else 0.3
 
-        # Ensure minimum overall score and add to the chosen scores
-        scores_to_use['overall'] = max(0.3, min(1.0, overall_score))
+        # Ensure minimum overall score and add to the final scores
+        final_scores['overall'] = max(0.3, min(1.0, overall_score))
 
-        # Store results for potential historical analysis (using the chosen scores)
+        # Store results for potential historical analysis
         prompt_hash = hash(prompt)
         if prompt_hash not in self.evaluation_results:
             self.evaluation_results[prompt_hash] = []
-        self.evaluation_results[prompt_hash].append(scores_to_use)
+        self.evaluation_results[prompt_hash].append(final_scores)
 
-        return scores_to_use
+        return final_scores
 
     def get_evaluation_history(self, prompt: str) -> List[Dict[str, float]]:
         """

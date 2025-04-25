@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from typing import Optional
 from dotenv import load_dotenv
 
-# Load environment variables from .env file. To force override, set override=True. Resolves value cache issues.
-load_dotenv()
+# Load environment variables from .env file. To allow system environment varialbes to override, set override=False. Resolves value cache issues.
+load_dotenv(override=True)
 
 def get_env_float(key: str, default: float) -> float:
     """Helper function to get float values from environment variables."""
