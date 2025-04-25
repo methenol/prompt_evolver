@@ -131,23 +131,48 @@ Focus on these aspects:
                     ]
                 )
 
-                # Extract and parse the JSON response using regex
+                # Extract and parse the JSON response using a more robust approach
                 result_text = response.choices[0].message.content
-                match = re.search(r'\{.*?\}', result_text, re.DOTALL)
+
+                # First try to find JSON using regex
+                match = re.search(r'\{.*\}', result_text, re.DOTALL)
                 if not match:
                     raise json.JSONDecodeError("No JSON object found in breeding response", result_text, 0)
+
                 json_str = match.group(0)
-                # Strip leading/trailing whitespace
-                stripped_json_str = json_str.strip()
-                # Direct fix for initial {' pattern after stripping whitespace
-                if stripped_json_str.startswith("{'"):
-                    fixed_start_json_str = '{"' + stripped_json_str[2:]
-                else:
-                    fixed_start_json_str = stripped_json_str
-                # Fix the closing single quote before the colon for all keys
-                fixed_quotes_json_str = re.sub(r"'(?=\s*:)", '"', fixed_start_json_str)
-                # Parse the cleaned and fixed JSON string
-                result = json.loads(fixed_quotes_json_str)
+
+                # Apply a series of fixes to make the JSON valid
+                # 1. Replace single quotes with double quotes for keys and string values
+                fixed_json_str = re.sub(r"'([^']*)'(?=\s*:)", r'"\1"', json_str)
+                fixed_json_str = re.sub(r':\s*\'([^\']*)\'', r': "\1"', fixed_json_str)
+
+                # 2. Fix any trailing commas in arrays or objects
+                fixed_json_str = re.sub(r',\s*}', '}', fixed_json_str)
+                fixed_json_str = re.sub(r',\s*]', ']', fixed_json_str)
+
+                # 3. Ensure all property names are in double quotes
+                fixed_json_str = re.sub(r'([{,]\s*)([a-zA-Z0-9_]+)(\s*:)', r'\1"\2"\3', fixed_json_str)
+
+                try:
+                    # Try to parse the fixed JSON
+                    result = json.loads(fixed_json_str)
+                except json.JSONDecodeError as e:
+                    # If that fails, try a more aggressive approach - extract just the offspring values
+                    print(f"First JSON parsing attempt failed: {str(e)}")
+
+                    # Try to extract offspring1 and offspring2 directly using regex
+                    offspring1_match = re.search(r'"offspring1"\s*:\s*"([^"]*)"', fixed_json_str, re.DOTALL)
+                    offspring2_match = re.search(r'"offspring2"\s*:\s*"([^"]*)"', fixed_json_str, re.DOTALL)
+
+                    if offspring1_match and offspring2_match:
+                        # Create a simple JSON object with the extracted values
+                        result = {
+                            "offspring1": offspring1_match.group(1),
+                            "offspring2": offspring2_match.group(1)
+                        }
+                    else:
+                        # If we can't extract the values, re-raise the exception
+                        raise
 
                 # Create new individuals with the offspring prompts
                 child1 = Individual(strategy=self._create_strategy_from_parents(parent1, parent2, "offspring1"))
@@ -199,23 +224,48 @@ Focus on these aspects:
                 ]
             )
 
-            # Extract and parse the JSON response using regex for simple breeding
+            # Extract and parse the JSON response using a more robust approach
             result_text = response.choices[0].message.content
-            match = re.search(r'\{.*?\}', result_text, re.DOTALL)
+
+            # First try to find JSON using regex
+            match = re.search(r'\{.*\}', result_text, re.DOTALL)
             if not match:
                 raise json.JSONDecodeError("No JSON object found in simple breeding response", result_text, 0)
+
             json_str = match.group(0)
-            # Strip leading/trailing whitespace
-            stripped_json_str = json_str.strip()
-            # Direct fix for initial {' pattern after stripping whitespace
-            if stripped_json_str.startswith("{'"):
-                fixed_start_json_str = '{"' + stripped_json_str[2:]
-            else:
-                fixed_start_json_str = stripped_json_str
-            # Fix the closing single quote before the colon for all keys
-            fixed_quotes_json_str = re.sub(r"'(?=\s*:)", '"', fixed_start_json_str)
-            # Parse the cleaned and fixed JSON string
-            result = json.loads(fixed_quotes_json_str)
+
+            # Apply a series of fixes to make the JSON valid
+            # 1. Replace single quotes with double quotes for keys and string values
+            fixed_json_str = re.sub(r"'([^']*)'(?=\s*:)", r'"\1"', json_str)
+            fixed_json_str = re.sub(r':\s*\'([^\']*)\'', r': "\1"', fixed_json_str)
+
+            # 2. Fix any trailing commas in arrays or objects
+            fixed_json_str = re.sub(r',\s*}', '}', fixed_json_str)
+            fixed_json_str = re.sub(r',\s*]', ']', fixed_json_str)
+
+            # 3. Ensure all property names are in double quotes
+            fixed_json_str = re.sub(r'([{,]\s*)([a-zA-Z0-9_]+)(\s*:)', r'\1"\2"\3', fixed_json_str)
+
+            try:
+                # Try to parse the fixed JSON
+                result = json.loads(fixed_json_str)
+            except json.JSONDecodeError as e:
+                # If that fails, try a more aggressive approach - extract just the offspring values
+                print(f"Simple breeding JSON parsing attempt failed: {str(e)}")
+
+                # Try to extract offspring1 and offspring2 directly using regex
+                offspring1_match = re.search(r'"offspring1"\s*:\s*"([^"]*)"', fixed_json_str, re.DOTALL)
+                offspring2_match = re.search(r'"offspring2"\s*:\s*"([^"]*)"', fixed_json_str, re.DOTALL)
+
+                if offspring1_match and offspring2_match:
+                    # Create a simple JSON object with the extracted values
+                    result = {
+                        "offspring1": offspring1_match.group(1),
+                        "offspring2": offspring2_match.group(1)
+                    }
+                else:
+                    # If we can't extract the values, re-raise the exception
+                    raise
 
             child1 = Individual(strategy=self._create_strategy_from_parents(parent1, parent2, "offspring1-simple"))
             child2 = Individual(strategy=self._create_strategy_from_parents(parent2, parent1, "offspring2-simple"))
