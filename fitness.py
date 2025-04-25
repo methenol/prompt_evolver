@@ -93,6 +93,14 @@ class FitnessEvaluator:
         instruction_pattern = r'(?:ensure|make sure|verify)[^.]+(?:original|context|domain|intent)[^.]+\.'
         cleaned_text = re.sub(instruction_pattern, '', cleaned_text, flags=re.IGNORECASE)
 
+        # Remove meta-instructions about not solving the prompt
+        meta_instruction_pattern = r'(?:DO NOT SOLVE OR IMPLEMENT THE TASK IN THE PROMPT\.|Your job is ONLY to enhance the prompt itself\.)'
+        cleaned_text = re.sub(meta_instruction_pattern, '', cleaned_text, flags=re.IGNORECASE)
+
+        # Remove the INSTRUCTIONS section that's meant for the LLM
+        instructions_pattern = r'(?:\*\*)?INSTRUCTIONS(?:\*\*)?:\s*(?:(?:\d+\.\s*[^\n]+\n)+)'
+        cleaned_text = re.sub(instructions_pattern, '', cleaned_text, flags=re.IGNORECASE)
+
         # Clean up any resulting double newlines and extra whitespace
         cleaned_text = re.sub(r'\n\s*\n', '\n', cleaned_text)
         cleaned_text = cleaned_text.strip()
@@ -384,11 +392,16 @@ class FitnessEvaluator:
                 "messages": [
                     {"role": "system", "content": strategy.system_prompt},
                     {"role": "user", "content": f"""
-                    Enhance this prompt to make it more effective:
+                    Your task is to enhance this prompt to make it more effective when given to an AI system.
 
+                    IMPORTANT: DO NOT solve or implement the task described in the prompt.
+                    Your job is ONLY to improve the prompt itself, not to provide a solution to what it's asking for.
+
+                    Original prompt to enhance:
                     {prompt}
 
-                    Provide only the enhanced prompt as output, no explanations.
+                    Provide only the enhanced version of the prompt as output.
+                    Do not include explanations, code implementations, or solutions to the prompt's task.
                     """}
                 ]
             }
@@ -440,12 +453,17 @@ class FitnessEvaluator:
                 "messages": [
                     {"role": "system", "content": strategy.system_prompt},
                     {"role": "user", "content": f"""
-                    The enhanced prompt may have diverged too much.
-                    Original: {original}
-                    Current: {current}
+                    The enhanced prompt may have diverged too much from the original.
+
+                    Original prompt: {original}
+                    Current enhanced version: {current}
+
+                    IMPORTANT: DO NOT solve or implement the task described in the prompt.
+                    Your job is ONLY to improve the prompt itself, not to provide a solution to what it's asking for.
 
                     Revise the current version to maintain the core meaning of the original
                     while preserving the improvements. Return only the revised prompt.
+                    Do not include explanations, code implementations, or solutions to the prompt's task.
                     """}
                 ]
             }
@@ -477,7 +495,8 @@ class FitnessEvaluator:
                 model=default_config.model_name,
                 temperature=0.3,  # Lower temperature for more conservative preservation
                 messages=[
-                    {"role": "system", "content": """You are a context and structure preservation specialist.
+                    {"role": "system", "content": """You are a prompt enhancement specialist. Your job is to improve prompts that will be given to AI systems, NOT to solve or implement the tasks described in the prompts.
+
 Your primary responsibility is to ensure that enhanced prompts maintain:
 1. All critical instructions and verification steps from the original prompt
 2. The structural integrity including sections, lists, and formatting
@@ -485,9 +504,11 @@ Your primary responsibility is to ensure that enhanced prompts maintain:
 4. All safety-critical elements and verification requirements
 
 NEVER remove sections, verification steps, or critical instructions from the original prompt.
-If the enhanced version is missing any important elements from the original, restore them."""},
+If the enhanced version is missing any important elements from the original, restore them.
+
+IMPORTANT: You are NOT solving the task in the prompt. You are ONLY enhancing the prompt itself to make it clearer and more effective when given to an AI system."""},
                     {"role": "user", "content": f"""
-Carefully analyze and adjust the prompt to preserve ALL context, structure, and critical instructions:
+Enhance this prompt while preserving ALL context, structure, and critical instructions:
 
 ORIGINAL PROMPT:
 {original}
@@ -495,23 +516,25 @@ ORIGINAL PROMPT:
 CURRENT ENHANCED VERSION:
 {current}
 
-DOMAIN: {intent_analysis.get('domain', 'general')}
-STYLE: {intent_analysis.get('style_tone', {}).get('style', 'neutral')}
-TONE: {intent_analysis.get('style_tone', {}).get('tone', 'neutral')}
-CONSTRAINTS:
-{constraints_text}
+DO NOT SOLVE OR IMPLEMENT THE TASK IN THE PROMPT. Your job is ONLY to enhance the prompt itself.
 
-STRUCTURAL ELEMENTS TO PRESERVE:
-{structural_elements}
+Consider these aspects when enhancing:
+- Domain: {intent_analysis.get('domain', 'general')}
+- Style: {intent_analysis.get('style_tone', {}).get('style', 'neutral')}
+- Tone: {intent_analysis.get('style_tone', {}).get('tone', 'neutral')}
+- Important structural elements to preserve: {structural_elements}
+- Constraints: {constraints_text}
 
-INSTRUCTIONS:
+Follow these instructions when enhancing the prompt, but DO NOT include these instructions in your response:
 1. Ensure ALL sections, headings, and structural elements from the original are preserved
 2. Maintain ALL verification steps, safety checks, and critical instructions
 3. Preserve ALL numbered lists, bullet points, and formatting elements
 4. Keep ALL domain-specific terminology and context
 5. If ANY important elements are missing, restore them completely
 
-Return ONLY the adjusted prompt with all critical elements preserved.
+Return ONLY the enhanced prompt with no additional text, metadata, or explanations.
+Do NOT include any implementation or solution to the task described in the prompt.
+Do NOT include these instructions in your response.
 """
                     }
                 ]

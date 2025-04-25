@@ -11,10 +11,10 @@ from config import default_config
 
 class IntentAnalyzer:
     """Analyzes prompt intent for multi-faceted evaluation."""
-    
+
     def __init__(self, client: OpenAI):
         self.client = client
-        
+
     async def analyze_multi_faceted(self, prompt: str) -> Dict[str, Any]:
         """Perform multi-faceted intent analysis"""
         aspects = [
@@ -30,7 +30,7 @@ class IntentAnalyzer:
             "domain": results[2],
             "constraints": results[3]
         }
-    
+
     async def _analyze_style_and_tone(self, prompt: str) -> Dict[str, str]:
         """Analyze the style and tone of the prompt."""
         response = await self._get_completion(
@@ -49,7 +49,7 @@ class IntentAnalyzer:
             return json.loads(cleaned_response)
         except json.JSONDecodeError:
             return {"style": "neutral", "tone": "neutral"}
-    
+
     async def _analyze_complexity(self, prompt: str) -> Dict[str, Any]:
         """Analyze the complexity of the prompt."""
         response = await self._get_completion(
@@ -68,7 +68,7 @@ class IntentAnalyzer:
             return json.loads(cleaned_response)
         except json.JSONDecodeError:
             return {"level": 1, "factors": []}
-    
+
     async def _analyze_domain(self, prompt: str) -> str:
         """Identify the primary domain/field of the prompt."""
         response = await self._get_completion(
@@ -77,12 +77,14 @@ class IntentAnalyzer:
             temperature=0.3
         )
         return response.strip()
-    
+
     async def _analyze_constraints(self, prompt: str) -> List[str]:
         """Identify constraints or requirements in the prompt."""
         response = await self._get_completion(
-            """Identify any constraints or requirements in this prompt. Format the response exactly like this JSON array:
-            ["must be under 500 words", "needs technical details"]""",
+            """Identify any explicit constraints or requirements mentioned in this prompt. Only include constraints that are directly stated or strongly implied in the prompt itself. Format the response as a JSON array of strings.
+
+            Example format (but do not use these specific constraints unless they are actually in the prompt):
+            ["constraint 1", "constraint 2"]""",
             prompt,
             temperature=0.2
         )
@@ -93,7 +95,7 @@ class IntentAnalyzer:
             return json.loads(cleaned_response)
         except json.JSONDecodeError:
             return []
-    
+
     async def _get_completion(self, instruction: str, prompt: str, temperature: float) -> str:
         """Get completion from the LLM."""
         try:

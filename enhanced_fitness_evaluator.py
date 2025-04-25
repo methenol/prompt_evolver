@@ -52,7 +52,6 @@ class EnhancedFitnessEvaluator:
             if not (0.0 <= score <= 1.0):
                 raise ValueError(f"Score out of range (0.0-1.0): {score}")
 
-
             # Return the valid score, clamped to a minimum of 0.3 as per original logic
             return max(0.3, score)
 
@@ -134,8 +133,8 @@ class EnhancedFitnessEvaluator:
                 return self.client.chat.completions.create(
                     model=self.model_name,
                     messages=[
-                        {"role": "system", "content": "You are a technical validity evaluator. Score the technical soundness of the given prompt on a scale from 0.00 to 1.00. Consider:\n- Correct terminology\n- Feasible requirements\n- Logical constraints\n- Technical best practices\nRespond *only* with a JSON object containing the score rounded to two decimal places, like this: {\"score\": <float_value_between_0.00_and_1.00_rounded_to_2_decimal_places>}. Do not include any other text."},
-                        {"role": "user", "content": prompt}
+                        {"role": "system", "content": "You are a technical validity evaluator. Your task is to EVALUATE a prompt, not to solve or implement what the prompt is asking for. Score the technical soundness of the given prompt on a scale from 0.00 to 1.00. Consider:\n- Correct terminology\n- Feasible requirements\n- Logical constraints\n- Technical best practices\nRespond *only* with a JSON object containing the score rounded to two decimal places, like this: {\"score\": <float_value_between_0.00_and_1.00_rounded_to_2_decimal_places>}. Do not include any other text, code implementations, or solutions to what the prompt is asking for."},
+                        {"role": "user", "content": "EVALUATE THIS PROMPT (DO NOT SOLVE IT):\n\n" + prompt}
                     ],
                     temperature=0.0
                 )
@@ -145,8 +144,8 @@ class EnhancedFitnessEvaluator:
                 return self.client.chat.completions.create(
                     model=self.model_name,
                     messages=[
-                        {"role": "system", "content": "You are a context retention evaluator. Score how well the prompt maintains the provided context on a scale from 0.00 to 1.00. Consider:\n- Inclusion of key elements\n- Appropriate use of context\n- Maintenance of details\n- Relevance to context\nRespond *only* with a JSON object containing the score rounded to two decimal places, like this: {\"score\": <float_value_between_0.00_and_1.00_rounded_to_2_decimal_places>}. Do not include any other text."},
-                        {"role": "user", "content": f"Context:\n{context_info}\n\nPrompt:\n{prompt}"}
+                        {"role": "system", "content": "You are a context retention evaluator. Your task is to EVALUATE a prompt, not to solve or implement what the prompt is asking for. Score how well the prompt maintains the provided context on a scale from 0.00 to 1.00. Consider:\n- Inclusion of key elements\n- Appropriate use of context\n- Maintenance of details\n- Relevance to context\nRespond *only* with a JSON object containing the score rounded to two decimal places, like this: {\"score\": <float_value_between_0.00_and_1.00_rounded_to_2_decimal_places>}. Do not include any other text, code implementations, or solutions to what the prompt is asking for."},
+                        {"role": "user", "content": f"EVALUATE THIS PROMPT (DO NOT SOLVE IT):\n\nContext:\n{context_info}\n\nPrompt to evaluate:\n{prompt}"}
                     ],
                     temperature=0.0
                 )
@@ -155,8 +154,8 @@ class EnhancedFitnessEvaluator:
                 return self.client.chat.completions.create(
                     model=self.model_name,
                     messages=[
-                        {"role": "system", "content": "You are an effectiveness evaluator. Score the overall effectiveness of the given prompt on a scale from 0.00 to 1.00. Consider:\n- Likelihood of success\n- Balance of precision and flexibility\n- Practical applicability\n- Overall quality\nRespond *only* with a JSON object containing the score rounded to two decimal places, like this: {\"score\": <float_value_between_0.00_and_1.00_rounded_to_2_decimal_places>}. Do not include any other text."},
-                        {"role": "user", "content": prompt}
+                        {"role": "system", "content": "You are an effectiveness evaluator. Your task is to EVALUATE a prompt, not to solve or implement what the prompt is asking for. Score the overall effectiveness of the given prompt on a scale from 0.00 to 1.00. Consider:\n- Likelihood of success\n- Balance of precision and flexibility\n- Practical applicability\n- Overall quality\nRespond *only* with a JSON object containing the score rounded to two decimal places, like this: {\"score\": <float_value_between_0.00_and_1.00_rounded_to_2_decimal_places>}. Do not include any other text, code implementations, or solutions to what the prompt is asking for."},
+                        {"role": "user", "content": "EVALUATE THIS PROMPT (DO NOT SOLVE IT):\n\n" + prompt}
                     ],
                     temperature=0.0
                 )
@@ -165,8 +164,8 @@ class EnhancedFitnessEvaluator:
                 return self.client.chat.completions.create(
                     model=self.model_name,
                     messages=[
-                        {"role": "system", "content": "You are an innovation evaluator. Score the creativity and novelty of the given prompt on a scale from 0.00 to 1.00. Consider:\n- Novel approaches\n- Creative problem-solving\n- Unique combinations\n- Innovative language\nRespond *only* with a JSON object containing the score rounded to two decimal places, like this: {\"score\": <float_value_between_0.00_and_1.00_rounded_to_2_decimal_places>}. Do not include any other text."},
-                        {"role": "user", "content": prompt}
+                        {"role": "system", "content": "You are an innovation evaluator. Your task is to EVALUATE a prompt, not to solve or implement what the prompt is asking for. Score the creativity and novelty of the given prompt on a scale from 0.00 to 1.00. Consider:\n- Novel approaches\n- Creative problem-solving\n- Unique combinations\n- Innovative language\nRespond *only* with a JSON object containing the score rounded to two decimal places, like this: {\"score\": <float_value_between_0.00_and_1.00_rounded_to_2_decimal_places>}. Do not include any other text, code implementations, or solutions to what the prompt is asking for."},
+                        {"role": "user", "content": "EVALUATE THIS PROMPT (DO NOT SOLVE IT):\n\n" + prompt}
                     ],
                     temperature=0.0
                 )
@@ -176,8 +175,8 @@ class EnhancedFitnessEvaluator:
                 return self.client.chat.completions.create(
                     model=self.model_name,
                     messages=[
-                        {"role": "system", "content": "You are an intent alignment evaluator. Score how well the prompt aligns with the goals on a scale from 0.00 to 1.00. Consider:\n- Alignment with goals\n- Purpose fulfillment\n- Requirement adherence\n- Outcome achievement\nRespond *only* with a JSON object containing the score rounded to two decimal places, like this: {\"score\": <float_value_between_0.00_and_1.00_rounded_to_2_decimal_places>}. Do not include any other text."},
-                        {"role": "user", "content": f"Intent Information:\n{intent_info}\n\nPrompt:\n{prompt}"}
+                        {"role": "system", "content": "You are an intent alignment evaluator. Your task is to EVALUATE a prompt, not to solve or implement what the prompt is asking for. Score how well the prompt aligns with the goals on a scale from 0.00 to 1.00. Consider:\n- Alignment with goals\n- Purpose fulfillment\n- Requirement adherence\n- Outcome achievement\nRespond *only* with a JSON object containing the score rounded to two decimal places, like this: {\"score\": <float_value_between_0.00_and_1.00_rounded_to_2_decimal_places>}. Do not include any other text, code implementations, or solutions to what the prompt is asking for."},
+                        {"role": "user", "content": f"EVALUATE THIS PROMPT (DO NOT SOLVE IT):\n\nIntent Information:\n{intent_info}\n\nPrompt to evaluate:\n{prompt}"}
                     ],
                     temperature=0.0
                 )
@@ -296,16 +295,22 @@ class EnhancedFitnessEvaluator:
         # Conditionally get scores based on evaluation type
         if default_config.evaluation_type in ["llm", "combined"]:
             llm_scores = await self._llm_evaluation(prompt, context)
+
+            # If we're using LLM evaluation only, make sure we don't fall back to rule-based
+            if default_config.evaluation_type == "llm":
+                final_scores = llm_scores
+
+        # Only get rule-based scores if we're using rule or combined evaluation
         if default_config.evaluation_type in ["rule", "combined"]:
             rule_scores = self._rule_based_evaluation(prompt, context)
 
-        # Aggregate scores based on evaluation type
+            # If we're using rule-based evaluation only, use those scores
+            if default_config.evaluation_type == "rule":
+                final_scores = rule_scores
+
+        # Only aggregate scores if we're using combined evaluation
         if default_config.evaluation_type == "combined":
             final_scores = self._aggregate_scores(llm_scores, rule_scores)
-        elif default_config.evaluation_type == "llm":
-            final_scores = llm_scores
-        else:  # "rule"
-            final_scores = rule_scores
 
         # Calculate weighted overall score using metric weights from UnifiedFitnessMetrics
         weights = self.metrics.get_all_metrics()
