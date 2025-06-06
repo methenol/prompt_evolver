@@ -162,16 +162,24 @@ class Evolution:
                 self.save_state(os.path.join(self.output_dir, f"evolution_state_gen_{self.generation}.json"))
                 self.visualize_fitness_history(os.path.join(self.output_dir, f"fitness_history_gen_{self.generation}.png"))
 
-            # Early stopping if perfect fitness found
-            if best_fitness > 0.95:
-                print("\nHigh fitness individual found. Early stopping.")
+            # Enhanced early stopping with multiple criteria
+            if self._should_stop_early(best_fitness):
                 break
+
+            # Calculate adaptive parameters for next generation
+            diversity = self.population.calculate_population_diversity()
+            adaptive_mutation_rate = self._calculate_adaptive_mutation_rate(mutation_rate, diversity)
+            adaptive_tournament_size = self.population.adaptive_tournament_size(tournament_size, diversity)
+            
+            print(f"Population diversity: {diversity:.3f}")
+            print(f"Adaptive mutation rate: {adaptive_mutation_rate:.3f} (base: {mutation_rate:.3f})")
+            print(f"Adaptive tournament size: {adaptive_tournament_size} (base: {tournament_size})")
 
             # Create next generation
             await self._create_next_generation(
                 prompt=prompt,
-                tournament_size=tournament_size,
-                mutation_rate=mutation_rate,
+                tournament_size=adaptive_tournament_size,
+                mutation_rate=adaptive_mutation_rate,
                 crossover_rate=crossover_rate,
                 elite_size=elite_size
             )
@@ -279,6 +287,94 @@ class Evolution:
             original_prompt,
             intent_analysis # Pass intent_analysis here
         )
+    
+    def _calculate_adaptive_mutation_rate(self, base_rate: float, diversity: float) -> float:
+        """Calculate adaptive mutation rate based on population diversity."""
+        # Low diversity -> higher mutation rate (up to 2x base rate)
+        # High diversity -> lower mutation rate (down to 0.5x base rate)
+        min_rate = base_rate * 0.5
+        max_rate = base_rate * 2.0
+        
+        # Inverse relationship: low diversity increases mutation rate
+        adaptive_rate = min_rate + (max_rate - min_rate) * (1.0 - diversity)
+        return max(min_rate, min(max_rate, adaptive_rate))
+    
+    def _get_convergence_metrics(self) -> Dict[str, float]:
+        """Calculate multiple convergence metrics for sophisticated early stopping."""
+        if not self.population or len(self.history) < 3:
+            return {"fitness_stagnation": 0.0, "diversity": 1.0, "improvement_rate": 1.0}
+        
+        # Fitness stagnation: how long since last improvement
+        recent_generations = min(5, len(self.history))
+        recent_best_fitness = [gen.get("best_fitness", 0) for gen in self.history[-recent_generations:]]
+        
+        fitness_stagnation = 0.0
+        if len(recent_best_fitness) > 1:
+            improvements = sum(1 for i in range(1, len(recent_best_fitness)) 
+                             if recent_best_fitness[i] > recent_best_fitness[i-1] + 0.001)
+            fitness_stagnation = 1.0 - (improvements / (len(recent_best_fitness) - 1))
+        
+        # Population diversity
+        diversity = self.population.calculate_population_diversity()
+        
+        # Improvement rate: slope of fitness over recent generations
+        improvement_rate = 0.0
+        if len(recent_best_fitness) >= 3:
+            # Simple linear regression slope
+            n = len(recent_best_fitness)
+            x_sum = sum(range(n))
+            y_sum = sum(recent_best_fitness)
+            xy_sum = sum(i * recent_best_fitness[i] for i in range(n))
+            x2_sum = sum(i * i for i in range(n))
+            
+            slope = (n * xy_sum - x_sum * y_sum) / (n * x2_sum - x_sum * x_sum)
+            improvement_rate = max(0.0, slope)  # Only positive improvements
+        
+        return {
+            "fitness_stagnation": fitness_stagnation,
+            "diversity": diversity,
+            "improvement_rate": improvement_rate
+        }
+    
+    def _should_stop_early(self, best_fitness: float) -> bool:
+        """Enhanced early stopping with multiple criteria."""
+        # Original high fitness criterion
+        if best_fitness > 0.95:
+            return True
+        
+        # Get convergence metrics
+        metrics = self._get_convergence_metrics()
+        
+        # Stop if fitness has stagnated for too long AND diversity is very low
+        if (metrics["fitness_stagnation"] > 0.8 and 
+            metrics["diversity"] < 0.1 and 
+            self.generation > 5):
+            print(f"\nEarly stopping: Population converged (stagnation: {metrics['fitness_stagnation']:.3f}, diversity: {metrics['diversity']:.3f})")
+            return True
+        
+        # Stop if improvement rate is negligible and we're past minimum generations
+        if (metrics["improvement_rate"] < 0.001 and 
+            self.generation > 10 and 
+            best_fitness > 0.7):
+            print(f"\nEarly stopping: Improvement rate too low ({metrics['improvement_rate']:.6f})")
+            return True
+        
+        return False
+    
+    def _select_parent(self, tournament_size: int, diversity: float) -> Individual:
+        """Select parent using adaptive selection method based on population state."""
+        # Use rank-based selection when diversity is low to encourage exploration
+        # Use tournament selection when diversity is high to encourage exploitation
+        if diversity < 0.3:
+            return self.population.select_rank_based(selection_pressure=1.2)
+        elif diversity > 0.7:
+            return self.population.select_tournament(tournament_size)
+        else:
+            # Mixed strategy in middle range
+            if random.random() < 0.5:
+                return self.population.select_tournament(tournament_size)
+            else:
+                return self.population.select_rank_based(selection_pressure=1.5)
 
     async def _create_next_generation(
         self,
@@ -304,6 +400,9 @@ class Evolution:
 
         # Fill the rest of the population with offspring using LLM breeding if enabled
         if self.use_llm_breeding:
+            # Calculate current population diversity for adaptive selection
+            current_diversity = self.population.calculate_population_diversity()
+            
             # Create a list of tasks for concurrent breeding
             breeding_tasks = []
 
@@ -313,14 +412,14 @@ class Evolution:
 
             # Create breeding tasks
             for _ in range(num_breeding_ops):
-                # Select parents using tournament selection
-                parent1 = self.population.select_tournament(tournament_size)
-                parent2 = self.population.select_tournament(tournament_size)
+                # Select parents using adaptive selection strategy
+                parent1 = self._select_parent(tournament_size, current_diversity)
+                parent2 = self._select_parent(tournament_size, current_diversity)
 
                 # Ensure we don't breed with self (try a few times)
                 attempts = 0
                 while parent1.id == parent2.id and attempts < 3:
-                    parent2 = self.population.select_tournament(tournament_size)
+                    parent2 = self._select_parent(tournament_size, current_diversity)
                     attempts += 1
 
                 # Create breeding task
@@ -337,7 +436,7 @@ class Evolution:
 
             # Add any needed mutation tasks
             for _ in range(additional_mutations):
-                parent = self.population.select_tournament(tournament_size)
+                parent = self._select_parent(tournament_size, current_diversity)
                 task = self.llm_breeder.mutate_prompt(
                     parent, prompt, mutation_strength=mutation_rate
                 )
@@ -366,18 +465,20 @@ class Evolution:
                     await asyncio.sleep(0.2)  # 0.2 second delay between batches (reduced from 0.5)
 
         else:
-            # Use traditional genetic algorithm operations
+            # Use traditional genetic algorithm operations with adaptive selection
+            current_diversity = self.population.calculate_population_diversity()
+            
             while len(offspring) < self.population.size:
                 # Decide whether to do crossover
                 if random.random() < crossover_rate and len(self.population.individuals) >= 2:
-                    # Select parents
-                    parent1 = self.population.select_tournament(tournament_size)
-                    parent2 = self.population.select_tournament(tournament_size)
+                    # Select parents using adaptive selection
+                    parent1 = self._select_parent(tournament_size, current_diversity)
+                    parent2 = self._select_parent(tournament_size, current_diversity)
 
                     # Ensure we don't crossover with self
                     attempts = 0
                     while parent1.id == parent2.id and attempts < 3:
-                        parent2 = self.population.select_tournament(tournament_size)
+                        parent2 = self._select_parent(tournament_size, current_diversity)
                         attempts += 1
 
                     if parent1.id != parent2.id:
@@ -392,7 +493,7 @@ class Evolution:
                         offspring.append(child)
                 else:
                     # Just mutate
-                    parent = self.population.select_tournament(tournament_size)
+                    parent = self._select_parent(tournament_size, current_diversity)
                     child = parent.mutate(mutation_rate)
                     offspring.append(child)
 
