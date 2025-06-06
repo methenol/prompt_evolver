@@ -1,7 +1,7 @@
 import asyncio
 import json
 import re
-from typing import Dict, List, Optional, Union, TypeVar, Callable, Any
+from typing import Dict, List, TypeVar, Any
 from unified_fitness_metrics import UnifiedFitnessMetrics
 from config import default_config
 from openai import OpenAI
@@ -30,12 +30,14 @@ class EnhancedFitnessEvaluator:
         self.evaluation_results: Dict[str, List[float]] = {}
 
     def _parse_score(self, content: str) -> float:
-        """Parse the score from LLM JSON response, extracting JSON even if extra text exists."""
+        """Parse score from LLM JSON response, extracting JSON even if extra text exists."""
         try:
             # Use regex to find the first JSON object in the content
             match = re.search(r'\{.*?\}', content, re.DOTALL)
             if not match:
-                raise json.JSONDecodeError("No JSON object found in response", content, 0)
+                raise json.JSONDecodeError(
+                    "No JSON object found in response", content, 0
+                )
 
             json_str = match.group(0)
 
@@ -59,13 +61,17 @@ class EnhancedFitnessEvaluator:
             print(f"Error parsing JSON response: {str(e)}. Response: '{content}'")
             return 0.3 # Default score on JSON error
         except KeyError:
-            print(f"Error: 'score' key not found in JSON response: '{json_str if 'json_str' in locals() else content}'")
+            context_str = json_str if 'json_str' in locals() else content
+            print(f"Error: 'score' key not found in JSON response: '{context_str}'")
             return 0.3 # Default score if key is missing
         except (ValueError, TypeError) as e:
-            print(f"Error validating score: {str(e)}. Response: '{json_str if 'json_str' in locals() else content}'")
+            context_str = json_str if 'json_str' in locals() else content
+            print(f"Error validating score: {str(e)}. Response: '{context_str}'")
             return 0.3 # Default score on validation error
 
-    async def _llm_evaluation(self, prompt: str, context: Dict, max_retries: int = 3) -> Dict[str, float]:
+    async def _llm_evaluation(
+        self, prompt: str, context: Dict, max_retries: int = 3
+    ) -> Dict[str, float]:
         """
         Primary evaluation using LLM-based scoring with retry mechanism.
         Returns scores for each metric defined in UnifiedFitnessMetrics.
@@ -338,6 +344,153 @@ class EnhancedFitnessEvaluator:
         if prompt_hash not in self.evaluation_results:
             self.evaluation_results[prompt_hash] = []
         self.evaluation_results[prompt_hash].append(final_scores)
+
+        return final_scores
+    
+    def calculate_evaluation_confidence(self, scores: Dict[str, float]) -> float:
+        """Calculate confidence in evaluation results based on score consistency and patterns."""
+        if not scores or len(scores) < 2:
+            return 0.5  # Low confidence for insufficient data
+        
+        # Extract numeric scores (excluding overall if present)
+        numeric_scores = [v for k, v in scores.items() if k != 'overall' and isinstance(v, (int, float))]
+        
+        if len(numeric_scores) < 3:
+            return 0.6  # Moderate confidence for few scores
+        
+        # Calculate standard deviation of scores - lower std = higher confidence
+        mean_score = sum(numeric_scores) / len(numeric_scores)
+        variance = sum((x - mean_score) ** 2 for x in numeric_scores) / len(numeric_scores)
+        std_dev = variance ** 0.5
+        
+        # Normalize confidence based on standard deviation
+        # Low std (consistent scores) = high confidence
+        confidence = max(0.3, 1.0 - (std_dev * 2))
+        
+        # Boost confidence if scores are not all at boundary values
+        boundary_scores = sum(1 for score in numeric_scores if score <= 0.35 or score >= 0.95)
+        boundary_penalty = (boundary_scores / len(numeric_scores)) * 0.2
+        confidence = max(0.3, confidence - boundary_penalty)
+        
+        return min(1.0, confidence)
+    
+    def validate_evaluation_quality(self, prompt: str, scores: Dict[str, float]) -> Dict[str, Any]:
+        """Validate the quality of evaluation results and provide quality metrics."""
+        validation_result = {
+            "confidence": self.calculate_evaluation_confidence(scores),
+            "consistency": 0.0,
+            "completeness": 0.0,
+            "warnings": []
+        }
+        
+        # Check completeness - do we have all expected metrics?
+        expected_metrics = set(self.metrics.get_all_metrics().keys())
+        available_metrics = set(k for k in scores.keys() if k != 'overall')
+        missing_metrics = expected_metrics - available_metrics
+        
+        validation_result["completeness"] = len(available_metrics) / len(expected_metrics)
+        if missing_metrics:
+            validation_result["warnings"].append(f"Missing metrics: {list(missing_metrics)}")
+        
+        # Check for unrealistic score patterns
+        numeric_scores = [v for k, v in scores.items() if k != 'overall' and isinstance(v, (int, float))]
+        if numeric_scores:
+            # Check if all scores are identical (suspicious)
+            unique_scores = len(set(round(score, 2) for score in numeric_scores))
+            if unique_scores == 1:
+                validation_result["warnings"].append("All scores are identical - possible evaluation error")
+                validation_result["confidence"] *= 0.7
+            
+            # Check if too many scores are at boundaries
+            boundary_count = sum(1 for score in numeric_scores if score <= 0.31 or score >= 0.99)
+            if boundary_count > len(numeric_scores) * 0.6:
+                validation_result["warnings"].append("Too many boundary scores - evaluation may be unreliable")
+                validation_result["confidence"] *= 0.8
+        
+        # Historical consistency check if we have previous evaluations
+        history = self.get_evaluation_history(prompt)
+        if len(history) > 1:
+            recent_scores = history[-3:]  # Look at last 3 evaluations
+            consistency_scores = []
+            
+            for metric in available_metrics:
+                metric_scores = [eval_result.get(metric, 0) for eval_result in recent_scores if metric in eval_result]
+                if len(metric_scores) > 1:
+                    std_dev = (sum((x - sum(metric_scores)/len(metric_scores))**2 for x in metric_scores) / len(metric_scores)) ** 0.5
+                    consistency_scores.append(1.0 - min(1.0, std_dev * 2))
+            
+            validation_result["consistency"] = sum(consistency_scores) / len(consistency_scores) if consistency_scores else 0.0
+        
+        return validation_result
+
+    async def evaluate(self, prompt: str, context: Dict) -> Dict[str, float]:
+        """
+        Main evaluation method that orchestrates the evaluation pipeline based on config.
+        Returns a dictionary of scores for each metric including an overall weighted score.
+        """
+        llm_scores = {}
+        rule_scores = {}
+        final_scores = {} # For combined
+
+        # Conditionally get scores based on evaluation type
+        if default_config.evaluation_type in ["llm", "combined"]:
+            llm_scores = await self._llm_evaluation(prompt, context)
+
+            # If we're using LLM evaluation only, make sure we don't fall back to rule-based
+            if default_config.evaluation_type == "llm":
+                final_scores = llm_scores
+
+        # Only get rule-based scores if we're using rule or combined evaluation
+        if default_config.evaluation_type in ["rule", "combined"]:
+            rule_scores = self._rule_based_evaluation(prompt, context)
+
+            # If we're using rule-based evaluation only, use those scores
+            if default_config.evaluation_type == "rule":
+                final_scores = rule_scores
+
+        # Only aggregate scores if we're using combined evaluation
+        if default_config.evaluation_type == "combined":
+            final_scores = self._aggregate_scores(llm_scores, rule_scores)
+
+        # Calculate weighted overall score using metric weights from UnifiedFitnessMetrics
+        weights = self.metrics.get_all_metrics()
+        weighted_sum = 0.0
+        total_weight = 0.0
+
+        # Calculate weighted sum based on final_scores
+        for metric, weight in weights.items():
+            if metric in final_scores:
+                weighted_sum += final_scores[metric] * weight
+                total_weight += weight
+
+        # Calculate overall score, ensuring it's never zero
+        if total_weight > 0:
+            overall_score = weighted_sum / total_weight
+        else:
+            # Fallback to simple average if weights are missing
+            overall_score = sum(final_scores.values()) / len(final_scores) if final_scores else 0.3
+
+        # Ensure minimum overall score and add to the final scores
+        final_scores['overall'] = max(0.3, min(1.0, overall_score))
+
+        # Store results for potential historical analysis
+        prompt_hash = hash(prompt)
+        if prompt_hash not in self.evaluation_results:
+            self.evaluation_results[prompt_hash] = []
+        self.evaluation_results[prompt_hash].append(final_scores)
+        
+        # Validate evaluation quality and adjust confidence if needed
+        validation = self.validate_evaluation_quality(prompt, final_scores)
+        if validation["confidence"] < 0.5:
+            print(f"Low evaluation confidence ({validation['confidence']:.2f}) for prompt. Warnings: {validation.get('warnings', [])}")
+        
+        # Store validation metadata
+        final_scores['_evaluation_metadata'] = {
+            'confidence': validation["confidence"],
+            'consistency': validation["consistency"],
+            'completeness': validation["completeness"],
+            'warnings': validation.get("warnings", [])
+        }
 
         return final_scores
 

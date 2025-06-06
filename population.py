@@ -42,6 +42,36 @@ class Population:
         # Return the contestant with the highest fitness
         return max(contestants, key=lambda ind: ind.fitness.get("overall", 0))
     
+    def select_rank_based(self, selection_pressure: float = 1.5) -> Individual:
+        """Select an individual using rank-based selection with configurable pressure."""
+        if not self.individuals:
+            raise ValueError("Population is empty, cannot select individuals")
+        
+        # Sort individuals by fitness (ascending order for ranking)
+        sorted_individuals = sorted(self.individuals, key=lambda ind: ind.fitness.get("overall", 0))
+        n = len(sorted_individuals)
+        
+        # Calculate rank-based probabilities with selection pressure
+        # Higher selection_pressure favors higher-ranked individuals more
+        probabilities = []
+        for rank in range(1, n + 1):  # rank 1 = worst, rank n = best
+            prob = (2 - selection_pressure + 2 * (selection_pressure - 1) * (rank - 1) / (n - 1)) / n
+            probabilities.append(prob)
+        
+        # Select individual based on rank probabilities
+        return random.choices(sorted_individuals, weights=probabilities, k=1)[0]
+    
+    def adaptive_tournament_size(self, base_size: int, diversity: float) -> int:
+        """Calculate adaptive tournament size based on population diversity."""
+        # Higher diversity -> smaller tournament (less selection pressure)
+        # Lower diversity -> larger tournament (more selection pressure)
+        min_size = max(2, base_size - 2)
+        max_size = min(len(self.individuals), base_size + 3)
+        
+        # Inverse relationship: low diversity increases tournament size
+        adjusted_size = int(min_size + (max_size - min_size) * (1.0 - diversity))
+        return max(min_size, min(max_size, adjusted_size))
+    
     def select_roulette(self) -> Individual:
         """Select an individual using roulette wheel selection."""
         if not self.individuals:
@@ -135,8 +165,46 @@ class Population:
                         # Penalize ind1
                         ind1.fitness["overall"] *= (1.0 - (similarity - similarity_threshold))
     
+    def calculate_population_diversity(self) -> float:
+        """Calculate overall population diversity using multiple measures."""
+        if len(self.individuals) <= 1:
+            return 0.0
+        
+        # Fitness diversity (standard deviation of fitness values)
+        fitness_values = [ind.fitness.get("overall", 0) for ind in self.individuals]
+        fitness_std = self._calculate_std(fitness_values)
+        fitness_diversity = min(1.0, fitness_std * 2)  # Normalize roughly to [0,1]
+        
+        # Strategy diversity (average pairwise dissimilarity)
+        total_dissimilarity = 0.0
+        comparisons = 0
+        
+        for i in range(len(self.individuals)):
+            for j in range(i + 1, len(self.individuals)):
+                similarity = self._calculate_similarity(self.individuals[i], self.individuals[j])
+                total_dissimilarity += (1.0 - similarity)
+                comparisons += 1
+        
+        strategy_diversity = total_dissimilarity / comparisons if comparisons > 0 else 0.0
+        
+        # Age diversity (encourages mix of old and new individuals)
+        ages = [ind.age for ind in self.individuals]
+        age_std = self._calculate_std(ages)
+        age_diversity = min(1.0, age_std / 5.0)  # Normalize roughly to [0,1]
+        
+        # Combined diversity measure
+        return (fitness_diversity * 0.4 + strategy_diversity * 0.5 + age_diversity * 0.1)
+    
+    def _calculate_std(self, values: List[float]) -> float:
+        """Calculate standard deviation of a list of values."""
+        if len(values) <= 1:
+            return 0.0
+        
+        mean = sum(values) / len(values)
+        variance = sum((x - mean) ** 2 for x in values) / len(values)
+        return variance ** 0.5
+    
     def _calculate_similarity(self, ind1: Individual, ind2: Individual) -> float:
-        """Calculate similarity between two individuals."""
         # Simple similarity measure based on strategy parameters
         # In a more sophisticated system, this would use more advanced metrics
         
