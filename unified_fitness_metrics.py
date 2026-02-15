@@ -1,3 +1,5 @@
+from typing import Dict, Any
+
 class UnifiedFitnessMetrics:
     """
     A class that implements standardized weights and validation for fitness metrics
@@ -18,6 +20,39 @@ class UnifiedFitnessMetrics:
         self.metrics = self.CORE_METRICS.copy()
         self._validate_weights()
         self.metric_metadata = self._initialize_metadata()
+
+    def set_dynamic_weights(self, weights: Dict[str, float]) -> None:
+        """Set custom weights for metrics temporarily.
+        
+        Allows overriding the default metric weights for specific evaluation scenarios.
+        Will revert to default weights on next instantiation but persists until then.
+        
+        Args:
+            weights: Dictionary mapping metric names to weights (must sum to ~1.0)
+        """
+        if not weights:
+            return
+        
+        # Validate that all known metrics are present
+        missing = set(self.CORE_METRICS.keys()) - set(weights.keys())
+        if missing:
+            print(f"Warning: Missing weights for metrics: {missing}. Using defaults for these.")
+            for metric in missing:
+                weights[metric] = self.CORE_METRICS[metric]
+        
+        # Validate weights sum to approximately 1.0
+        total = sum(weights.values())
+        if abs(total - 1.0) > 0.01:
+            print(f"Warning: Weight sums to {total:.4f}, not 1.0. Normalizing...")
+            # Normalize
+            weights = {k: v/total for k, v in weights.items()}
+        
+        self.metrics = weights.copy()
+
+    def reset_default_weights(self) -> None:
+        """Reset to default metric weights."""
+        self.metrics = self.CORE_METRICS.copy()
+
 
     def _validate_weights(self) -> None:
         """Validates that metric weights sum to 1.0"""

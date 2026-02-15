@@ -9,13 +9,7 @@ import asyncio
 import random
 import statistics
 from typing import List, Dict, Any, Optional, Tuple
-# Try to import matplotlib (optional for visualization)
-try:
-    import matplotlib.pyplot as plt
-    MATPLOTLIB_AVAILABLE = True
-except ImportError:
-    plt = None
-    MATPLOTLIB_AVAILABLE = False
+import matplotlib.pyplot as plt
 
 from openai import OpenAI
 from intent_analyzer import IntentAnalyzer
@@ -37,10 +31,7 @@ class Evolution:
         output_dir: str = "output",
         save_frequency: int = 2,
         use_llm_breeding: bool = True,
-        evaluation_type: str = default_config.evaluation_type,
-        disable_adaptive_mutation: bool = False,
-        adaptive_threshold: float = 0.8,
-        early_stopping_delay: int = 7
+        evaluation_type: str = default_config.evaluation_type # Add evaluation_type
     ):
         self.client = client
         self.intent_analyzer = intent_analyzer
@@ -56,15 +47,7 @@ class Evolution:
         self.use_llm_breeding = use_llm_breeding
         self.evaluation_type = evaluation_type # Store evaluation_type
 
-
-        # Track diversity metrics for adaptive parameters
-        self.diversity_history = []
         # Initialize metrics for fitness evaluation
-
-        # Adaptive evolution parameters
-        self.disable_adaptive_mutation = disable_adaptive_mutation
-        self.adaptive_threshold = adaptive_threshold
-        self.early_stopping_delay = early_stopping_delay
         self.metrics = UnifiedFitnessMetrics()
 
         # Initialize LLM breeder if using LLM-based breeding
@@ -82,118 +65,6 @@ class Evolution:
         self.population = Population(size=population_size, init_strategies=strategies)
         self.generation = 0
         self.original_prompt = None # Reset on fresh initialize
-
-
-    def _calculate_diversity(self) -> float:
-        """Calculate current population diversity (0.0 to 1.0, where 1.0 is highly diverse).
-        
-        Higher values indicate more diverse population, lower values indicate homogeneous population.
-        Used for adaptive parameter tuning.
-        """
-        if not self.population or not self.population.individuals:
-            return 0.0
-        
-        individuals = self.population.individuals
-        if len(individuals) < 2:
-            return 0.0
-        
-        total_dissimilarity = 0.0
-        pairs = 0
-        
-        # Calculate pairwise dissimilarities
-        for i in range(len(individuals)):
-            for j in range(i + 1, len(individuals)):
-                # Get similarity (higher = more similar)
-                similarity = self.population._calculate_similarity(individuals[i], individuals[j])
-                # Convert to dissimilarity (higher = less similar)
-                dissimilarity = 1.0 - min(similarity, 1.0)
-                total_dissimilarity += dissimilarity
-                pairs += 1
-        
-        if pairs == 0:
-            return 0.0
-            
-        avg_dissimilarity = total_dissimilarity / pairs
-        return round(avg_dissimilarity, 4)
-
-    def _adapt_parameters(self, current_mutation: float, current_crossover: float, diversity: float) -> tuple:
-        """Adapt mutation and crossover rates based on population diversity and convergence.
-        
-        Uses feedback control inspired by adaptive differential evolution:
-        - High diversity + low convergence → decrease mutation, maintain/exploration
-        - Low diversity + high convergence → increase mutation to escape local optima
-        - Mixed conditions → moderate adjustments
-        """
-        # Calculate convergence metrics
-        if not self.population or not self.population.individuals:
-            return current_mutation, current_crossover
-        
-        fitness_values = [ind.fitness.get("overall", 0) for ind in self.population.individuals]
-        if not fitness_values:
-            return current_mutation, current_crossover
-        
-        avg_fitness = sum(fitness_values) / len(fitness_values)
-        max_fitness = max(fitness_values)
-        fitness_variance = sum((f - avg_fitness) ** 2 for f in fitness_values) / len(fitness_values)
-        
-        # Adaptive rules
-        # 1. If trapped in local optimum (low diversity, high fitness), boost mutation
-        if diversity < 0.2 and max_fitness > self.adaptive_threshold:
-            mutation_rate = min(current_mutation * 1.5, 0.8)
-            crossover_rate = max(current_crossover * 0.7, 0.3)  # Reduce crossover to prevent破坏
-            print(f"  Adapting: Low diversity trapped in optimum, increasing mutation to {mutation_rate:.2f}")
-        
-        # 2. If highly diverse with low convergence, reduce mutation to exploit
-        elif diversity > 0.6 and fitness_variance > 0.01:
-            mutation_rate = max(current_mutation * 0.7, 0.1)
-            crossover_rate = min(current_crossover * 1.2, 0.95)
-            print(f"  Adapting: High diversity, decreasing mutation to {mutation_rate:.2f}")
-        
-        # 3. Otherwise, keep stable
-        else:
-            mutation_rate = current_mutation
-            crossover_rate = current_crossover
-        
-        return mutation_rate, crossover_rate
-
-    def _detect_stagnation(self, patience: int = None) -> bool:
-        """Detect if evolution is stagnant (no improvement for 'patience' generations).
-        
-        Returns True if there's been no significant improvement in the specified number of generations.
-        Uses a combination of best fitness and average fitness to detect stagnation.
-        """
-        # Use configured delay unless explicitly overridden
-        actual_patience = patience if patience is not None else self.early_stopping_delay
-        if len(self.history) < actual_patience:
-            return False
-        
-        # Check best fitness trend
-        recent_maxes = [stats['max_fitness'] for stats in self.history[-patience:]]
-        latest = self.history[-1]['max_fitness'] if self.history else 0
-        best_recent = max(recent_maxes)
-        
-        # Check if we've plateaued (not improved in 'patience' generations)
-        improvement_delta = latest - best_recent
-        variance = sum((x - best_recent) ** 2 for x in recent_maxes) / len(recent_maxes)
-        
-        # Consider stagnant if: not improving AND variance is low (stable but not improving)
-        return (improvement_delta < 0.001 and variance < 0.001)
-
-    def _get_early_stopping_reason(self, best_fitness: float) -> Optional[str]:
-        """Determine reason for potential early stopping.
-        
-        Returns:
-            str or None: Reason for stopping ('high_fitness', 'stagnation'), or None if continuing
-        """
-        # Check for high fitness
-        if best_fitness > 0.95:
-            return "high_fitness"
-        
-        # Check for stagnation
-        if self._detect_stagnation(patience=7):
-            return "stagnation"
-        
-        return None
 
     async def evolve(
         self,
@@ -256,14 +127,6 @@ class Evolution:
             # Apply niching to maintain diversity
             self.population.apply_niching(similarity_threshold=0.85)
 
-            # Calculate and store diversity
-            current_diversity = self._calculate_diversity()
-            self.diversity_history.append({
-                'generation': self.generation,
-                'diversity': current_diversity
-            })
-            print(f"  Population diversity: {current_diversity:.4f}")
-
             # Find best individual
             current_best = max(
                 self.population.individuals,
@@ -299,27 +162,16 @@ class Evolution:
                 self.save_state(os.path.join(self.output_dir, f"evolution_state_gen_{self.generation}.json"))
                 self.visualize_fitness_history(os.path.join(self.output_dir, f"fitness_history_gen_{self.generation}.png"))
 
-            # Check for early stopping based on fitness or stagnation
-            early_stop_reason = self._get_early_stopping_reason(best_fitness)
-            if early_stop_reason:
-                if early_stop_reason == "high_fitness":
-                    print("\nHigh fitness individual found. Early stopping.")
-                elif early_stop_reason == "stagnation":
-                    print(f"\nEvolution stalled (no improvement for 7 generations). Early stopping.")
+            # Early stopping if perfect fitness found
+            if best_fitness > 0.95:
+                print("\nHigh fitness individual found. Early stopping.")
                 break
-
-
-            # Adapt mutation and crossover rates based on diversity and convergence
-            adapted_mutation, adapted_crossover = self._adapt_parameters(
-                mutation_rate, crossover_rate, current_diversity
-            )
-            print(f"  Adapted mutation rate: {adapted_mutation:.2f}, crossover rate: {adapted_crossover:.2f}")
 
             # Create next generation
             await self._create_next_generation(
                 prompt=prompt,
                 tournament_size=tournament_size,
-                mutation_rate=adapted_mutation,
+                mutation_rate=mutation_rate,
                 crossover_rate=crossover_rate,
                 elite_size=elite_size
             )
@@ -554,9 +406,6 @@ class Evolution:
 
     def _log_generation_stats(self) -> None:
         """Log statistics for the current generation."""
-        # Get population-level statistics
-        pop_stats = self.population.calculate_fitness_statistics() if self.population else None
-        
         if not self.population or not self.population.individuals:
             return
 
@@ -637,10 +486,6 @@ class Evolution:
 
     def visualize_fitness_history(self, filepath: str) -> None:
         """Visualize fitness history over generations."""
-        if not MATPLOTLIB_AVAILABLE:
-            print("Matplotlib not available. Skipping visualization.")
-            return
-            
         try:
             if not self.history:
                 print("No history to visualize")
@@ -650,20 +495,21 @@ class Evolution:
             max_fitness = [stats["max_fitness"] for stats in self.history]
             avg_fitness = [stats["avg_fitness"] for stats in self.history]
 
-            fig, ax = plt.subplots(figsize=(10, 6))
-            ax.plot(generations, max_fitness, 'b-', label='Maximum Fitness')
-            ax.plot(generations, avg_fitness, 'r-', label='Average Fitness')
-            ax.set_xlabel('Generation')
-            ax.set_ylabel('Fitness')
-            ax.set_title('Fitness Evolution')
-            ax.legend()
-            ax.grid(True)
+            plt.figure(figsize=(10, 6))
+            plt.plot(generations, max_fitness, 'b-', label='Maximum Fitness')
+            plt.plot(generations, avg_fitness, 'r-', label='Average Fitness')
+            plt.xlabel('Generation')
+            plt.ylabel('Fitness')
+            plt.title('Fitness Evolution')
+            plt.legend()
+            plt.grid(True)
 
             # Save figure
-            plt.tight_layout()
             plt.savefig(filepath)
-            plt.close(fig)
+            plt.close()
 
             print(f"Fitness history visualized and saved to {filepath}")
+        except ImportError:
+            print("Matplotlib not available. Cannot visualize fitness history.")
         except Exception as e:
             print(f"Error visualizing fitness history: {str(e)}")

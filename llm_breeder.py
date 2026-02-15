@@ -131,11 +131,19 @@ Focus on these aspects:
                     ]
                 )
 
-                # Extract and parse the JSON response using a more robust approach
+                # Extract and parse the JSON response
                 result_text = response.choices[0].message.content
 
-                # First try to find JSON using regex
-                match = re.search(r'\{.*\}', result_text, re.DOTALL)
+                # Remove any markdown code fences that might interfere
+                result_text = result_text.replace('```json', '').replace('```', '').strip()
+
+                # First try direct JSON parsing
+                try:
+                    result = json.loads(result_text)
+                    print(f"  Successfully parsed direct JSON from LLM response")
+                except json.JSONDecodeError:
+                    # If direct parsing fails, try extraction
+                    match = re.search(r'\{.*\}', result_text, re.DOTALL)
                 if not match:
                     raise json.JSONDecodeError("No JSON object found in breeding response", result_text, 0)
 
@@ -161,8 +169,8 @@ Focus on these aspects:
                     print(f"First JSON parsing attempt failed: {str(e)}")
 
                     # Try to extract offspring1 and offspring2 directly using regex
-                    offspring1_match = re.search(r'"offspring1"\s*:\s*"([^"]*)"', fixed_json_str, re.DOTALL)
-                    offspring2_match = re.search(r'"offspring2"\s*:\s*"([^"]*)"', fixed_json_str, re.DOTALL)
+                    offspring1_match = re.search(r'"offspring1"\s*:\s*"([^"]*)"', result_text, re.DOTALL)
+                    offspring2_match = re.search(r'"offspring2"\s*:\s*"([^"]*)"', result_text, re.DOTALL)
 
                     if offspring1_match and offspring2_match:
                         # Create a simple JSON object with the extracted values
@@ -170,6 +178,7 @@ Focus on these aspects:
                             "offspring1": offspring1_match.group(1),
                             "offspring2": offspring2_match.group(1)
                         }
+                        print(f"  Extracted offspring from raw response")
                     else:
                         # If we can't extract the values, re-raise the exception
                         raise

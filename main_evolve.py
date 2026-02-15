@@ -34,6 +34,15 @@ async def main():
                         help="Output directory")
     parser.add_argument("--model", type=str, default=default_config.model_name,
                         help="Model name to use")
+    
+    parser.add_argument("--disable-adaptive-mutation", action="store_true",
+                        help="Disable adaptive mutation rate adjustment (default: False)")
+    parser.add_argument("--adaptive-threshold", type=float, default=0.8,
+                        help="Threshold for detecting local optimum (default: 0.8)")
+    parser.add_argument("--early-stopping-delay", type=int, default=7,
+                        help="Generations of stagnation before early stopping (default: 7)")
+    parser.add_argument("--export-diversity-history", action="store_true",
+                        help="Export population diversity history to CSV")
     parser.add_argument("--enable-llm-breeding", action="store_true",
                         help="Enable LLM-based breeding (default: False)")
     parser.add_argument("--eval-type", type=str, default=default_config.evaluation_type,
@@ -53,6 +62,12 @@ async def main():
     config.output_dir = args.output
     config.model_name = args.model
     config.evaluation_type = args.eval_type.lower() # Update config with eval_type
+    
+    # Store additional parameters for later use
+    config.disable_adaptive_mutation = args.disable_adaptive_mutation
+    config.adaptive_threshold = args.adaptive_threshold
+    config.early_stopping_delay = args.early_stopping_delay
+    config.export_diversity_history = args.export_diversity_history
 
     try:
         # Set up OpenAI client with built-in rate limiting
@@ -73,7 +88,10 @@ async def main():
             output_dir=config.output_dir,
             save_frequency=config.save_frequency,
             use_llm_breeding=args.enable_llm_breeding,
-            evaluation_type=config.evaluation_type # Pass evaluation_type
+            evaluation_type=config.evaluation_type, # Pass evaluation_type
+            disable_adaptive_mutation=args.disable_adaptive_mutation,
+            adaptive_threshold=args.adaptive_threshold,
+            early_stopping_delay=args.early_stopping_delay
         )
 
         # Get initial strategies

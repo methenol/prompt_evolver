@@ -188,6 +188,31 @@ class Population:
         
         return same_count / total_count if total_count > 0 else 0
     
+
+    def calculate_fitness_statistics(self) -> Dict[str, float]:
+        """Calculate comprehensive fitness statistics for the population."""
+        if not self.individuals:
+            return {
+                'min': 0.0,
+                'max': 0.0,
+                'mean': 0.0,
+                'median': 0.0,
+                'std': 0.0
+            }
+        
+        fitness_values = [ind.fitness.get('overall', 0) for ind in self.individuals]
+        
+        import statistics
+        return {
+            'min': min(fitness_values),
+            'max': max(fitness_values),
+            'mean': sum(fitness_values) / len(fitness_values),
+            'median': statistics.median(fitness_values),
+            'std': (
+                sum((x - sum(fitness_values)/len(fitness_values)) ** 2 for x in fitness_values) / len(fitness_values)
+            ) ** 0.5 if len(fitness_values) > 1 else 0.0
+        }
+
     def to_json(self) -> List[Dict[str, Any]]:
         """Convert population to a JSON-serializable list."""
         return [ind.to_json() for ind in self.individuals]
@@ -198,3 +223,40 @@ class Population:
         population = cls(size=size)
         population.individuals = [Individual.from_json(ind_data) for ind_data in data]
         return population
+    def calculate_average_pairwise_distance(self) -> float:
+        """Calculate average pairwise distance between individuals (for diversity monitoring)."""
+        if len(self.individuals) < 2:
+            return 0.0
+        
+        distances = []
+        for i in range(len(self.individuals)):
+            for j in range(i + 1, len(self.individuals)):
+                dist = self._calculate_similarity(self.individuals[i], self.individuals[j])
+                distances.append(dist)
+        
+        return sum(distances) / len(distances) if distances else 0.0
+    
+    def get_niche_counts(self, threshold: float = 0.8) -> List[int]:
+        """Count how many individuals belong to each niche based on similarity threshold."""
+        if len(self.individuals) < 2:
+            return [len(self.individuals)]
+        
+        niche_labels = [-1] * len(self.individuals)
+        niche_count = 0
+        
+        for i, individual in enumerate(self.individuals):
+            assigned = False
+            for j in range(i):
+                if niche_labels[j] >= 0:
+                    similarity = self._calculate_similarity(individual, self.individuals[j])
+                    if similarity > threshold:
+                        niche_labels[i] = niche_labels[j]
+                        assigned = True
+                        break
+            
+            if not assigned:
+                niche_labels[i] = niche_count
+                niche_count += 1
+        
+        counts = [niche_labels.count(i) for i in range(niche_count)]
+        return counts
