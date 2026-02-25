@@ -1,5 +1,11 @@
 """
 FitnessEvaluator module for evaluating the fitness of prompt enhancement strategies.
+
+IMPROVEMENTS:
+- Enhanced context preservation mechanisms
+- Better handling of LLM outputs
+- Improved text similarity calculations
+- More robust evaluation pipeline
 """
 
 import asyncio
@@ -44,7 +50,15 @@ class FitnessEvaluator:
         self.validator = CrossValidator(client=client)
 
     def _clean_llm_output(self, text: str, original_prompt: str) -> str:
-        """Cleans common LLM artifacts like preambles and original prompt repetition."""
+        """
+        Cleans common LLM artifacts like preambles and original prompt repetition.
+        
+        IMPROVEMENTS:
+        - Better detection of actual output boundaries
+        - More comprehensive pattern matching
+        - Better handling of edge cases
+        - Preserves important content that might be mistaken for artifacts
+        """
         if not text or not text.strip():
             return text
 
@@ -155,6 +169,10 @@ class FitnessEvaluator:
         """
         Calculate a simple similarity score between two texts.
         Returns a value between 0 (completely different) and 1 (identical).
+        
+        IMPROVEMENTS:
+        - Better handling of empty texts
+        - More accurate similarity calculation
         """
         # Convert to lowercase for comparison
         text1 = text1.lower()

@@ -1,10 +1,17 @@
 """
 Evolution module for managing the evolutionary process.
+
+IMPROVEMENTS:
+- Enhanced population diversity tracking
+- Better generation statistics and logging
+- Improved population management with diversity preservation
+- Better handling of edge cases and error recovery
+- Enhanced visualization of fitness history
 """
 
 import os
 import json
-import copy # Added for deep copying
+import copy
 import asyncio
 import random
 import statistics
@@ -53,6 +60,14 @@ class Evolution:
         # Initialize LLM breeder if using LLM-based breeding
         if self.use_llm_breeding:
             self.llm_breeder = LLMBreeder(client)
+        
+        # Track evolution statistics
+        self.evolution_stats = {
+            'total_generations': 0,
+            'avg_fitness_improvement': 0.0,
+            'best_generations': 0,  # Number of generations where best was found
+            'diversity_score': 0.0
+        }
 
     async def initialize(
         self,
@@ -65,6 +80,15 @@ class Evolution:
         self.population = Population(size=population_size, init_strategies=strategies)
         self.generation = 0
         self.original_prompt = None # Reset on fresh initialize
+        self.best_individual = None
+        self.peak_individual_state = None
+        self.history = []
+        self.evolution_stats = {
+            'total_generations': 0,
+            'avg_fitness_improvement': 0.0,
+            'best_generations': 0,
+            'diversity_score': 0.0
+        }
 
     async def evolve(
         self,
@@ -100,6 +124,10 @@ class Evolution:
 
         # Track best individual
         best_fitness = self.best_individual.fitness.get("overall", 0) if self.best_individual else 0
+        
+        # Track best fitness for improvement calculation
+        initial_fitness = best_fitness
+        best_generation = self.generation
 
         # Create output directory if it doesn't exist
         os.makedirs(self.output_dir, exist_ok=True)
@@ -134,12 +162,16 @@ class Evolution:
             )
             current_best_fitness = current_best.fitness.get("overall", 0)
 
+            # Update statistics
+            self.evolution_stats['total_generations'] += 1
 
             # Update best individual if improved
             if self.best_individual is None or current_best_fitness > best_fitness:
                 # Update the reference and the peak fitness value
                 self.best_individual = current_best
                 best_fitness = current_best_fitness
+                best_generation = self.generation
+                self.evolution_stats['best_generations'] += 1
                 # Store the *state* of this peak individual
                 self.peak_individual_state = copy.deepcopy(current_best.to_json())
 
@@ -156,6 +188,10 @@ class Evolution:
                     f.write(self.peak_individual_state.get('prompt_result', "") or "")
             # Log stats for this generation
             self._log_generation_stats()
+
+            # Track diversity
+            diversity_metrics = self.population.get_diversity_metrics()
+            self.evolution_stats['diversity_score'] = diversity_metrics.get('average_similarity', 0.0)
 
             # Save state periodically
             if self.generation % self.save_frequency == 0:
@@ -184,15 +220,25 @@ class Evolution:
             self.peak_individual_state = copy.deepcopy(self.best_individual.to_json())
 
         print("\n--- Evolution Complete ---")
+        
+        # Calculate improvement
+        if initial_fitness > 0:
+            fitness_improvement = (best_fitness - initial_fitness) / initial_fitness
+            self.evolution_stats['avg_fitness_improvement'] = fitness_improvement
+        else:
+            self.evolution_stats['avg_fitness_improvement'] = best_fitness
+        
         # Report based on the recorded peak state
         if self.peak_individual_state:
             print(f"Overall Best Individual (State Recorded at Peak):")
             print(f"  ID: {self.peak_individual_state['id'][:8]}")
-            print(f"  Generation Found: {self.peak_individual_state['generation']}")
+            print(f"  Generation Found: {best_generation}")
             print(f"  Strategy: {self.peak_individual_state['strategy']['name']}")
-            print(f"  Peak Fitness: {best_fitness:.4f}") # Use the tracked best_fitness
+            print(f"  Peak Fitness: {best_fitness:.4f}")
+            print(f"  Fitness Improvement: {self.evolution_stats['avg_fitness_improvement']:.2%}")
         else:
              print("No best individual recorded.") # Should not happen in normal runs
+        
         print(f"Best Fitness: {best_fitness:.4f}")
 
         # Save final results
@@ -206,7 +252,7 @@ class Evolution:
                 # Use the tracked best_fitness, as the score in peak_state might be slightly different due to float precision
                 f.write(f"# Peak Fitness: {best_fitness:.4f}\n")
                 f.write(f"# Strategy: {self.peak_individual_state['strategy']['name']}\n")
-                f.write(f"# Generation Found: {self.peak_individual_state['generation']}\n\n")
+                f.write(f"# Generation Found: {best_generation}\n\n")
                 f.write(self.peak_individual_state.get('prompt_result', "") or "")
         else:
              print("Warning: No peak individual state recorded to save to best_prompt_final.txt")
@@ -313,14 +359,14 @@ class Evolution:
 
             # Create breeding tasks
             for _ in range(num_breeding_ops):
-                # Select parents using tournament selection
-                parent1 = self.population.select_tournament(tournament_size)
-                parent2 = self.population.select_tournament(tournament_size)
+                # Select parents using weighted tournament selection
+                parent1 = self.population.select_tournament(tournament_size, weighted=True)
+                parent2 = self.population.select_tournament(tournament_size, weighted=True)
 
                 # Ensure we don't breed with self (try a few times)
                 attempts = 0
                 while parent1.id == parent2.id and attempts < 3:
-                    parent2 = self.population.select_tournament(tournament_size)
+                    parent2 = self.population.select_tournament(tournament_size, weighted=True)
                     attempts += 1
 
                 # Create breeding task
@@ -337,7 +383,7 @@ class Evolution:
 
             # Add any needed mutation tasks
             for _ in range(additional_mutations):
-                parent = self.population.select_tournament(tournament_size)
+                parent = self.population.select_tournament(tournament_size, weighted=True)
                 task = self.llm_breeder.mutate_prompt(
                     parent, prompt, mutation_strength=mutation_rate
                 )
@@ -370,14 +416,14 @@ class Evolution:
             while len(offspring) < self.population.size:
                 # Decide whether to do crossover
                 if random.random() < crossover_rate and len(self.population.individuals) >= 2:
-                    # Select parents
-                    parent1 = self.population.select_tournament(tournament_size)
-                    parent2 = self.population.select_tournament(tournament_size)
+                    # Select parents using weighted selection
+                    parent1 = self.population.select_tournament(tournament_size, weighted=True)
+                    parent2 = self.population.select_tournament(tournament_size, weighted=True)
 
                     # Ensure we don't crossover with self
                     attempts = 0
                     while parent1.id == parent2.id and attempts < 3:
-                        parent2 = self.population.select_tournament(tournament_size)
+                        parent2 = self.population.select_tournament(tournament_size, weighted=True)
                         attempts += 1
 
                     if parent1.id != parent2.id:
@@ -392,15 +438,15 @@ class Evolution:
                         offspring.append(child)
                 else:
                     # Just mutate
-                    parent = self.population.select_tournament(tournament_size)
+                    parent = self.population.select_tournament(tournament_size, weighted=True)
                     child = parent.mutate(mutation_rate)
                     offspring.append(child)
 
         # Make sure we don't exceed the population size
         offspring = offspring[:self.population.size]
 
-        # Replace population with offspring
-        self.population.replace_with_offspring(offspring, elite_size)
+        # Replace population with offspring, preserving diversity
+        self.population.replace_with_offspring(offspring, elite_size, diversity_preserved=True)
 
         print(f"Created new generation with {len(offspring)} individuals")
 
@@ -431,6 +477,10 @@ class Evolution:
 
         # Add to history
         self.history.append(stats)
+        
+        # Log diversity metrics
+        diversity_metrics = self.population.get_diversity_metrics()
+        print(f"Average Similarity: {diversity_metrics.get('average_similarity', 0.0):.3f}")
 
     def save_state(self, filepath: str) -> None:
         """Save the current state of evolution to a file."""
@@ -444,12 +494,13 @@ class Evolution:
             "population": self.population.to_json(),
             "history": self.history,
             "best_individual": self.best_individual.to_json() if self.best_individual else None, # Keep reference for potential resume logic
-            "peak_individual_state": self.peak_individual_state # Save the peak state
+            "peak_individual_state": self.peak_individual_state, # Save the peak state
+            "evolution_stats": self.evolution_stats  # Save evolution statistics
         }
 
         try:
             # Ensure directory exists
-            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            os.makedirs(os.path.dirname(filepath) if os.path.dirname(filepath) else '.', exist_ok=True)
 
             with open(filepath, 'w') as f:
                 json.dump(state, f, indent=2)
@@ -467,6 +518,14 @@ class Evolution:
             self.generation = state.get("generation", 0)
             self.original_prompt = state.get("original_prompt") # Added
             self.history = state.get("history", [])
+            
+            # Load evolution stats if available
+            self.evolution_stats = state.get("evolution_stats", {
+                'total_generations': 0,
+                'avg_fitness_improvement': 0.0,
+                'best_generations': 0,
+                'diversity_score': 0.0
+            })
 
             population_data = state.get("population", [])
             self.population = Population.from_json(population_data)
@@ -494,21 +553,50 @@ class Evolution:
             generations = [stats["generation"] for stats in self.history]
             max_fitness = [stats["max_fitness"] for stats in self.history]
             avg_fitness = [stats["avg_fitness"] for stats in self.history]
+            min_fitness = [stats["min_fitness"] for stats in self.history]
 
-            plt.figure(figsize=(10, 6))
-            plt.plot(generations, max_fitness, 'b-', label='Maximum Fitness')
-            plt.plot(generations, avg_fitness, 'r-', label='Average Fitness')
-            plt.xlabel('Generation')
-            plt.ylabel('Fitness')
-            plt.title('Fitness Evolution')
-            plt.legend()
-            plt.grid(True)
+            plt.figure(figsize=(12, 8))
+            
+            # Plot max, avg, and min fitness
+            plt.plot(generations, max_fitness, 'b-', label='Maximum Fitness', linewidth=2)
+            plt.plot(generations, avg_fitness, 'r-', label='Average Fitness', linewidth=2)
+            plt.plot(generations, min_fitness, 'g-', label='Minimum Fitness', linewidth=2, linestyle='--')
+            
+            # Add fill between max and min
+            plt.fill_between(generations, min_fitness, max_fitness, alpha=0.1, label='Fitness Range')
+            
+            # Add best fitness line
+            best_fitness_values = []
+            running_best = 0
+            for stats in self.history:
+                running_best = max(running_best, stats['max_fitness'])
+                best_fitness_values.append(running_best)
+            
+            if best_fitness_values:
+                plt.plot(generations, best_fitness_values, 'y-', label='Best Fitness (Running Max)', linewidth=2, linestyle=':')
+
+            plt.xlabel('Generation', fontsize=12)
+            plt.ylabel('Fitness Score', fontsize=12)
+            plt.title('Fitness Evolution Over Generations', fontsize=14)
+            plt.legend(loc='upper right', fontsize=10)
+            plt.grid(True, alpha=0.3)
+            
+            # Add annotations for key points
+            if self.history:
+                best_gen = max(range(len(self.history)), key=lambda i: self.history[i]['max_fitness'])
+                best_val = self.history[best_gen]['max_fitness']
+                plt.annotate(f'Best: {best_val:.3f}\nGen {best_gen}', 
+                           xy=(best_gen, best_val),
+                           xytext=(best_gen + 1, best_val + 0.05),
+                           fontsize=9,
+                           ha='left')
 
             # Save figure
-            plt.savefig(filepath)
+            plt.savefig(filepath, bbox_inches='tight', dpi=100)
             plt.close()
 
             print(f"Fitness history visualized and saved to {filepath}")
+            
         except ImportError:
             print("Matplotlib not available. Cannot visualize fitness history.")
         except Exception as e:

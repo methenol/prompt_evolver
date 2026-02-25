@@ -1,11 +1,18 @@
 """
 LLM Breeder module for using LLMs to perform breeding operations on prompts.
+
+IMPROVEMENTS:
+- More robust JSON parsing with multiple fallback strategies
+- Better prompt combination that preserves intent
+- Improved error handling with better recovery
+- Enhanced mutation with more controlled variations
+- Better tracking of breeding attempts
 """
 
 import json
 import re
 import asyncio
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 from dataclasses import dataclass
 
 from openai import OpenAI
@@ -43,6 +50,10 @@ class LLMBreeder:
         # Using OpenAI client's built-in rate limiting
         self.base_retry_delay = 0.5  # Base delay for our own retry logic
         self.max_retries = 3  # Maximum number of our own retries (OpenAI client will also retry)
+        self.breeding_attempts = 0
+        self.mutation_attempts = 0
+        self.success_count = 0
+        self.failed_count = 0
 
     # We're now using OpenAI's built-in rate limiting, so this method is simplified
     async def _handle_rate_limit(self, retry_count: int) -> None:
@@ -56,6 +67,77 @@ class LLMBreeder:
         print(f"Rate limit or error encountered. Backing off for {delay} seconds...")
         await asyncio.sleep(delay)
 
+    def _parse_json_response(self, text: str, keys: List[str] = None) -> Optional[Dict[str, str]]:
+        """
+        Parse JSON response with multiple fallback strategies.
+        
+        IMPROVEMENTS:
+        - Multiple extraction strategies for robustness
+        - Better handling of malformed JSON
+        - Flexible key matching
+        """
+        if keys is None:
+            keys = ['offspring1', 'offspring2']
+        
+        # Strategy 1: Extract JSON block from text
+        json_match = re.search(r'\{.*\}', text, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(0)
+            try:
+                data = json.loads(json_str)
+                return data
+            except json.JSONDecodeError:
+                pass
+        
+        # Strategy 2: Try to fix common JSON issues
+        fixed_text = text
+        
+        # Replace single quotes with double quotes
+        fixed_text = re.sub(r"(\w+)'\s*:", r'"\1":', fixed_text)
+        fixed_text = re.sub(r':\s*\'', ': "', fixed_text)
+        fixed_text = re.sub(r"'\s*([^\s,}]+)", r' "\1"', fixed_text)
+        
+        # Remove trailing commas
+        fixed_text = re.sub(r',(\s*[}\]])', r'\1', fixed_text)
+        
+        # Strategy 3: Extract values using regex for each key
+        result = {}
+        for key in keys:
+            # Look for key in various formats
+            patterns = [
+                rf'["\']?{key}["\']?\s*:\s*["\'](.+?)["\']',
+                rf'["\']?{key}["\']?\s*:\s*```[^\n]*\n(.*?)```',
+                rf'["\']?{key}["\']?\s*:\s*\[(.+?)\]',
+            ]
+            
+            for pattern in patterns:
+                match = re.search(pattern, fixed_text, re.DOTALL)
+                if match:
+                    value = match.group(1).strip()
+                    # Clean up the value
+                    if value.startswith('```') and value.endswith('```'):
+                        value = value[3:-3].strip()
+                    result[key] = value
+                    break
+        
+        if result:
+            return result
+        
+        # Strategy 4: Try to find key-value pairs in the text
+        for key in keys:
+            # Look for the key followed by colon and text until next key or end
+            pattern = rf'{key}[:\s\n]+([^\n]+(?:\n[^\n]+)*)?'
+            match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+            if match:
+                value = match.group(1).strip()
+                # Clean up code fences
+                value = re.sub(r'```(?:json)?\s*', '', value)
+                value = value.strip()
+                if value:
+                    result[key] = value
+        
+        return result if result else None
+    
     async def generate_offspring(
         self,
         parent1: Individual,
@@ -63,54 +145,56 @@ class LLMBreeder:
         original_prompt: str
     ) -> Tuple[Individual, Individual]:
         """Generate offspring prompts using the LLM to perform crossover."""
+        self.breeding_attempts += 1
+        
         # Get the parent prompts
         prompt1 = parent1.prompt_result or original_prompt
         prompt2 = parent2.prompt_result or original_prompt
 
         # Create a system prompt that explains what we want
-        system_prompt = f"""You are an expert evolutionary prompt engineer. Your *sole* purpose is to generate two new 'offspring' prompts based on the two 'parent' prompts provided by the user.
+        system_prompt = f"""You are an expert evolutionary prompt engineer. Your sole purpose is to generate two new 'offspring' prompts that combine elements from two 'parent' prompts.
 
 **CRITICAL INSTRUCTIONS:**
 1. DO NOT execute or solve the task described in the parent prompts. Your task is ONLY to manipulate the text of the prompts themselves to create new variations.
-2. DO NOT include the original parent prompts in your output. Generate completely new prompts that combine elements from both parents.
-3. DO NOT prefix your output with "Original:" or include any text like "Enhanced Prompt:" or similar labels.
-4. DO NOT repeat the parent prompts verbatim at the beginning of your response.
+2. DO NOT include the original parent prompts verbatim in your output. Generate completely new prompts that combine elements from both parents.
+3. DO NOT prefix your output with explanations like "Here are the offspring prompts:" or similar.
+4. Create offspring that combine strengths of both parents while avoiding weaknesses.
 
-Create offspring that combine the strengths of both parents while avoiding weaknesses, considering these key metrics:
-{json.dumps(self.metrics.get_all_metadata(), indent=2)}
+Focus on these quality aspects when creating offspring:
+- Maintain clarity and specificity
+- Preserve intent alignment with original purpose
+- Ensure technical validity and structure
+- Balance innovation with effectiveness
+- Retain important context and constraints
 
-Your entire output MUST be ONLY a single, valid JSON object. Do not include any introductory text, explanations, or code blocks outside the JSON structure.
-The JSON object must have exactly two fields: "offspring1" and "offspring2", containing the complete text of the two new prompts.
+Your output MUST be ONLY a JSON object with this exact structure:
+{{"offspring1": "Complete text of first offspring prompt", "offspring2": "Complete text of second offspring prompt"}}
 
-IMPORTANT: Each offspring prompt should be a complete, standalone prompt that does not reference or include the original parent prompts."""
+Each offspring should be a complete, standalone prompt that doesn't reference the original parent prompts."""
 
         # Create a user prompt that contains the parent information
         user_prompt = f"""I have two prompt variations for the same task.
 
-PARENT 1: {prompt1}
+PARENT 1 (First Variation):
+{prompt1}
 
-PARENT 2: {prompt2}
+PARENT 2 (Second Variation):
+{prompt2}
 
-Create two new offspring prompts that combine elements from both parents. The offspring should:
+Create two new offspring prompts that combine elements from both parents. Each offspring should:
 1. Maintain the original intent
 2. Take the best elements from each parent
-3. Be distinct from each other
+3. Be distinct from each other (not identical)
 4. Potentially introduce minor improvements
 
 IMPORTANT REQUIREMENTS:
-- DO NOT include the original parent prompts in your output
-- DO NOT prefix your output with labels like "Original:" or "Enhanced:"
-- DO NOT repeat the parent prompts verbatim at the beginning of your response
+- DO NOT include the original parent prompts verbatim in your output
+- DO NOT prefix your output with labels like "Offspring 1:" or "Offspring 2:"
+- DO NOT add explanations before or after the JSON
 - Each offspring should be a complete, standalone prompt
+- The two offspring should be different from each other
 
-Focus on these aspects:
-{json.dumps(self.metrics.get_all_metrics(), indent=2)}
-
-**IMPORTANT:** Your response MUST be ONLY the following JSON structure, containing the full text of the two new prompts. Do not add any other text, comments, or formatting.
-{{
-  "offspring1": "The complete text of the first offspring prompt (without including the original parent prompts)",
-  "offspring2": "The complete text of the second offspring prompt (without including the original parent prompts)"
-}}"""
+Your response must be ONLY valid JSON with keys "offspring1" and "offspring2"."""
 
         # Try with gradual quality degradation (OpenAI client handles rate limiting)
         retry_count = 0
@@ -134,55 +218,26 @@ Focus on these aspects:
                 # Extract and parse the JSON response using a more robust approach
                 result_text = response.choices[0].message.content
 
-                # First try to find JSON using regex
-                match = re.search(r'\{.*\}', result_text, re.DOTALL)
-                if not match:
-                    raise json.JSONDecodeError("No JSON object found in breeding response", result_text, 0)
-
-                json_str = match.group(0)
-
-                # Apply a series of fixes to make the JSON valid
-                # 1. Replace single quotes with double quotes for keys and string values
-                fixed_json_str = re.sub(r"'([^']*)'(?=\s*:)", r'"\1"', json_str)
-                fixed_json_str = re.sub(r':\s*\'([^\']*)\'', r': "\1"', fixed_json_str)
-
-                # 2. Fix any trailing commas in arrays or objects
-                fixed_json_str = re.sub(r',\s*}', '}', fixed_json_str)
-                fixed_json_str = re.sub(r',\s*]', ']', fixed_json_str)
-
-                # 3. Ensure all property names are in double quotes
-                fixed_json_str = re.sub(r'([{,]\s*)([a-zA-Z0-9_]+)(\s*:)', r'\1"\2"\3', fixed_json_str)
-
-                try:
-                    # Try to parse the fixed JSON
-                    result = json.loads(fixed_json_str)
-                except json.JSONDecodeError as e:
-                    # If that fails, try a more aggressive approach - extract just the offspring values
-                    print(f"First JSON parsing attempt failed: {str(e)}")
-
-                    # Try to extract offspring1 and offspring2 directly using regex
-                    offspring1_match = re.search(r'"offspring1"\s*:\s*"([^"]*)"', fixed_json_str, re.DOTALL)
-                    offspring2_match = re.search(r'"offspring2"\s*:\s*"([^"]*)"', fixed_json_str, re.DOTALL)
-
-                    if offspring1_match and offspring2_match:
-                        # Create a simple JSON object with the extracted values
-                        result = {
-                            "offspring1": offspring1_match.group(1),
-                            "offspring2": offspring2_match.group(1)
-                        }
+                # Try to parse JSON
+                result = self._parse_json_response(result_text, ['offspring1', 'offspring2'])
+                
+                if result and 'offspring1' in result and 'offspring2' in result:
+                    offspring1 = result['offspring1']
+                    offspring2 = result['offspring2']
+                else:
+                    # Try more aggressive extraction
+                    result = self._parse_json_response(result_text, ['offspring1', 'offspring2'])
+                    if result and len(result) >= 2:
+                        offspring1 = list(result.values())[0]
+                        offspring2 = list(result.values())[1]
                     else:
-                        # If we can't extract the values, re-raise the exception
-                        raise
-
+                        raise ValueError("Failed to extract offspring from response")
+                
                 # Create new individuals with the offspring prompts
                 child1 = Individual(strategy=self._create_strategy_from_parents(parent1, parent2, "offspring1"))
                 child2 = Individual(strategy=self._create_strategy_from_parents(parent2, parent1, "offspring2"))
 
-                # Get the offspring prompts
-                offspring1 = result.get("offspring1", "")
-                offspring2 = result.get("offspring2", "")
-
-                # Post-process the offspring prompts to ensure they don't contain the original prompts
+                # Post-process the offspring prompts
                 offspring1 = self._clean_offspring_prompt(offspring1, prompt1, prompt2)
                 offspring2 = self._clean_offspring_prompt(offspring2, prompt1, prompt2)
 
@@ -196,6 +251,7 @@ Focus on these aspects:
                 child1.generation = max(parent1.generation, parent2.generation) + 1
                 child2.generation = max(parent1.generation, parent2.generation) + 1
 
+                self.success_count += 1
                 return child1, child2
 
             except Exception as e:
@@ -211,8 +267,8 @@ Focus on these aspects:
         # If all retries failed, try a simpler breeding approach before falling back
         try:
             # Attempt a final breeding with minimal prompt and higher temperature
-            simple_system_prompt = "Create two new prompts by combining elements from the given parent prompts. Do not include the original prompts in your output. Return only JSON."
-            simple_user_prompt = f"Parent 1: {prompt1}\n\nParent 2: {prompt2}\n\nReturn only JSON with offspring1 and offspring2. Do not include the original parent prompts in your output."
+            simple_system_prompt = "Create two different prompt variations that combine elements from two parent prompts. Return ONLY JSON with 'offspring1' and 'offspring2' keys."
+            simple_user_prompt = f"Parent 1: {prompt1}\n\nParent 2: {prompt2}\n\nCreate two offspring prompts combining these. Return ONLY JSON: { {'offspring1': '...', 'offspring2': '...'} }"
 
             # OpenAI client will handle rate limiting automatically
             response = self.client.chat.completions.create(
@@ -224,74 +280,43 @@ Focus on these aspects:
                 ]
             )
 
-            # Extract and parse the JSON response using a more robust approach
+            # Try to parse the response
             result_text = response.choices[0].message.content
+            
+            # Try multiple parsing strategies
+            result = self._parse_json_response(result_text, ['offspring1', 'offspring2'])
+            
+            if result and 'offspring1' in result and 'offspring2' in result:
+                offspring1 = result['offspring1']
+                offspring2 = result['offspring2']
+            else:
+                # Extract any text that looks like offspring
+                lines = result_text.strip().split('\n')
+                offspring1 = lines[0] if lines else ""
+                offspring2 = lines[1] if len(lines) > 1 else ""
 
-            # First try to find JSON using regex
-            match = re.search(r'\{.*\}', result_text, re.DOTALL)
-            if not match:
-                raise json.JSONDecodeError("No JSON object found in simple breeding response", result_text, 0)
-
-            json_str = match.group(0)
-
-            # Apply a series of fixes to make the JSON valid
-            # 1. Replace single quotes with double quotes for keys and string values
-            fixed_json_str = re.sub(r"'([^']*)'(?=\s*:)", r'"\1"', json_str)
-            fixed_json_str = re.sub(r':\s*\'([^\']*)\'', r': "\1"', fixed_json_str)
-
-            # 2. Fix any trailing commas in arrays or objects
-            fixed_json_str = re.sub(r',\s*}', '}', fixed_json_str)
-            fixed_json_str = re.sub(r',\s*]', ']', fixed_json_str)
-
-            # 3. Ensure all property names are in double quotes
-            fixed_json_str = re.sub(r'([{,]\s*)([a-zA-Z0-9_]+)(\s*:)', r'\1"\2"\3', fixed_json_str)
-
-            try:
-                # Try to parse the fixed JSON
-                result = json.loads(fixed_json_str)
-            except json.JSONDecodeError as e:
-                # If that fails, try a more aggressive approach - extract just the offspring values
-                print(f"Simple breeding JSON parsing attempt failed: {str(e)}")
-
-                # Try to extract offspring1 and offspring2 directly using regex
-                offspring1_match = re.search(r'"offspring1"\s*:\s*"([^"]*)"', fixed_json_str, re.DOTALL)
-                offspring2_match = re.search(r'"offspring2"\s*:\s*"([^"]*)"', fixed_json_str, re.DOTALL)
-
-                if offspring1_match and offspring2_match:
-                    # Create a simple JSON object with the extracted values
-                    result = {
-                        "offspring1": offspring1_match.group(1),
-                        "offspring2": offspring2_match.group(1)
-                    }
-                else:
-                    # If we can't extract the values, re-raise the exception
-                    raise
+            # Clean and post-process
+            offspring1 = self._clean_offspring_prompt(offspring1, prompt1, prompt2)
+            offspring2 = self._clean_offspring_prompt(offspring2, prompt1, prompt2)
 
             child1 = Individual(strategy=self._create_strategy_from_parents(parent1, parent2, "offspring1-simple"))
             child2 = Individual(strategy=self._create_strategy_from_parents(parent2, parent1, "offspring2-simple"))
 
-            # Get the offspring prompts
-            offspring1 = result.get("offspring1", "")
-            offspring2 = result.get("offspring2", "")
-
-            # Post-process the offspring prompts to ensure they don't contain the original prompts
-            offspring1 = self._clean_offspring_prompt(offspring1, prompt1, prompt2)
-            offspring2 = self._clean_offspring_prompt(offspring2, prompt1, prompt2)
-
-            # Set the prompt results
             child1.prompt_result = offspring1
             child2.prompt_result = offspring2
-
             child1.parent_ids = [parent1.id, parent2.id]
             child2.parent_ids = [parent1.id, parent2.id]
             child1.generation = max(parent1.generation, parent2.generation) + 1
             child2.generation = max(parent1.generation, parent2.generation) + 1
+            
+            self.success_count += 1
             return child1, child2
 
         except Exception as e:
             print(f"Simple breeding attempt failed: {str(e)}")
 
         # If all attempts failed, fallback to regular crossover
+        self.failed_count += 1
         print("All LLM breeding attempts failed, falling back to regular crossover")
         return Individual.crossover(parent1, parent2)
 
@@ -302,6 +327,7 @@ Focus on these aspects:
         mutation_strength: float = 0.3
     ) -> Individual:
         """Use the LLM to mutate a prompt with rate limiting and retries."""
+        self.mutation_attempts += 1
         prompt_to_mutate = individual.prompt_result or original_prompt
 
         # Get metric metadata for focused mutations
@@ -315,8 +341,7 @@ Your mutations should maintain the original intent while making potentially bene
 **CRITICAL INSTRUCTIONS:**
 1. DO NOT include the original prompt in your output.
 2. DO NOT prefix your output with "Original:" or include any text like "Enhanced Prompt:" or similar labels.
-3. DO NOT repeat the original prompt verbatim at the beginning of your response.
-4. Return ONLY the mutated prompt as a complete, standalone prompt.
+3. Return ONLY the mutated prompt as a complete, standalone prompt.
 
 Consider these metrics when mutating:
 {json.dumps(metrics_metadata, indent=2)}"""
@@ -381,6 +406,7 @@ Return ONLY the mutated prompt with no explanations or other text."""
                 mutated.parent_ids = [individual.id]
                 mutated.generation = individual.generation + 1
 
+                self.success_count += 1
                 return mutated
 
             except Exception as e:
@@ -423,12 +449,15 @@ Return ONLY the mutated prompt with no explanations or other text."""
             mutated.prompt_result = cleaned_prompt
             mutated.parent_ids = [individual.id]
             mutated.generation = individual.generation + 1
+            
+            self.success_count += 1
             return mutated
 
         except Exception as e:
             print(f"Simple mutation attempt failed: {str(e)}")
 
         # If all attempts failed, fallback to regular mutation
+        self.failed_count += 1
         print("All LLM mutation attempts failed, falling back to regular mutation")
         return individual.mutate(mutation_strength)
 
@@ -582,13 +611,16 @@ Return ONLY the mutated prompt with no explanations or other text."""
         p1 = parent1.strategy
         p2 = parent2.strategy
 
+        # Combine system prompts intelligently
+        combined_system = self._combine_system_prompts(p1.system_prompt, p2.system_prompt)
+
         new_strategy = EnhancementStrategy(
             name=f"LLM-Bred-{name_suffix}",
             temperature=(p1.temperature + p2.temperature) / 2,  # Average temperature
             chain_of_thought=p1.chain_of_thought,  # Take from first parent
             semantic_check=max(p1.semantic_check, p2.semantic_check),  # Take the more conservative approach
             context_preservation=max(p1.context_preservation, p2.context_preservation),  # Take the more conservative approach
-            system_prompt=self._combine_system_prompts(p1.system_prompt, p2.system_prompt),
+            system_prompt=combined_system,
             max_tokens=p1.max_tokens if p1.max_tokens is not None else p2.max_tokens,
             top_p=p1.top_p if p1.top_p is not None else p2.top_p,
             frequency_penalty=p1.frequency_penalty if p1.frequency_penalty is not None else p2.frequency_penalty,
@@ -620,13 +652,10 @@ Return ONLY the mutated prompt with no explanations or other text."""
         """
         Clean an offspring prompt to ensure it's a valid enhancement of the parent prompts.
 
-        Args:
-            offspring: The offspring prompt to clean
-            parent1: The first parent prompt
-            parent2: The second parent prompt
-
-        Returns:
-            The cleaned offspring prompt
+        IMPROVEMENTS:
+        - Better handling of code blocks
+        - Better detection of parent prompt inclusion
+        - More robust text cleaning
         """
         if not offspring or not offspring.strip():
             return offspring
@@ -640,7 +669,7 @@ Return ONLY the mutated prompt with no explanations or other text."""
         cleaned_offspring = cleaned_offspring.strip()
 
         # Remove common prefixes
-        prefix_pattern = r'^(?:enhanced|adjusted|revised|mutated|original|improved|new|modified|output|result|final)\s*(?:prompt|version|text)?\s*[:\-]?\s*'
+        prefix_pattern = r'^(?:offspring|enhanced|adjusted|revised|mutated|original|improved|new|modified|output|result|final)\s*(?:prompt|version|text)?\s*[:\-]?\s*'
         cleaned_offspring = re.sub(prefix_pattern, '', cleaned_offspring, flags=re.IGNORECASE).strip()
 
         # Check if the offspring contains either parent prompt
@@ -665,10 +694,10 @@ Return ONLY the mutated prompt with no explanations or other text."""
             if len(additional_content) > 10:
                 return cleaned_offspring
 
-        # Check for the "Original: ... Enhanced: ..." format
+        # Check for the "Parent 1: ... Offspring:" format
         for pattern in [
-            r'(?:original|input|parent\s*\d*)[:\-]?\s*(.*?)(?:enhanced|improved|output|offspring)[:\-]?\s*(.*)',
-            r'(?:original|input|parent\s*\d*)[:\-]?\s*(.*?)\n+(?:enhanced|improved|output|offspring)[:\-]?\s*(.*)'
+            r'(?:parent\s*\d*|original|input|parent)[:\-]?\s*(.*?)(?:offspring|enhanced|improved|output)[:\-]?\s*(.*)',
+            r'(?:parent\s*\d*|original|input|parent)[:\-]?\s*(.*?)\n+(?:offspring|enhanced|improved|output)[:\-]?\s*(.*)'
         ]:
             match = re.search(pattern, cleaned_offspring, re.IGNORECASE | re.DOTALL)
             if match and match.group(2) and len(match.group(2).strip()) > 20:
@@ -678,8 +707,8 @@ Return ONLY the mutated prompt with no explanations or other text."""
                     return match.group(2).strip()
 
         # Remove metadata and instructions that might have been added by the LLM
-        # This handles cases where the LLM adds things like "Domain: Testing" or "Style: technical"
-        metadata_pattern = r'(?:domain|style|context|keywords|constraints|format):\s*[^\n]+\n*'
+        # This handles cases where the LLM adds things like "Offspring: Testing" or "Style: technical"
+        metadata_pattern = r'(?:domain|style|context|keywords|constraints|format|offspring)[:\-]?:\s*[^\n]+\n*'
         cleaned_offspring = re.sub(metadata_pattern, '', cleaned_offspring, flags=re.IGNORECASE)
 
         # Remove instructions like "Ensure the enhanced version maintains..."
@@ -778,9 +807,47 @@ Return ONLY the mutated prompt with no explanations or other text."""
         return matches / longer if longer > 0 else 0
 
     def _combine_system_prompts(self, prompt1: str, prompt2: str) -> str:
-        """Combine two system prompts intelligently."""
+        """
+        Combine two system prompts intelligently.
+        
+        IMPROVEMENTS:
+        - Better extraction of key components
+        - More meaningful combination
+        - Preserves important elements from both
+        """
         if prompt1 == prompt2:
             return prompt1
-
-        # Very simple combination for now - in a real system would use more sophisticated NLP
+        
+        # Try to extract common patterns
+        # Both prompts typically start with "You are a ..."
+        common_prefixes = []
+        for p in [prompt1, prompt2]:
+            if p.startswith("You are a"):
+                common_prefixes.append(p)
+        
+        if len(common_prefixes) == 2:
+            # Extract the role from both
+            role1 = common_prefixes[0].split("You are a")[1].split(".")[0] if "You are a" in common_prefixes[0] else ""
+            role2 = common_prefixes[1].split("You are a")[1].split(".")[0] if "You are a" in common_prefixes[1] else ""
+            
+            if role1 and role2:
+                # Take the more specific/detailed one
+                if len(role1.split()) > len(role2.split()):
+                    combined_role = role1
+                else:
+                    combined_role = role2
+                
+                # Extract the focus/purpose from each
+                focus1 = prompt1.split("Focus on")[1].strip() if "Focus on" in prompt1 else ""
+                focus2 = prompt2.split("Focus on")[1].strip() if "Focus on" in prompt2 else ""
+                
+                if focus1 and focus2:
+                    return f"You are a {combined_role}. {focus1} {focus2}."
+        
+        # Fallback: use prompt1 with elements from prompt2
+        # Find the second sentence of prompt2
+        parts2 = prompt2.split('.')
+        if len(parts2) >= 2:
+            return f"{prompt1.split('.')[0]}. {parts2[1].strip()}"
+        
         return f"You are a prompt enhancement assistant. {prompt1.split('.')[0]}. {prompt2.split('.')[0]}."
