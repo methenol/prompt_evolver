@@ -33,7 +33,7 @@ class EnhancedFitnessEvaluator:
         self.client = client
         self.model_name = default_config.model_name
         self.metrics = UnifiedFitnessMetrics()
-        self.evaluation_results: Dict[str, List[Dict[str, float]]] = {}
+        self.evaluation_results: Dict[int, List[Dict[str, float]]] = {}
         self._max_history_size = 100  # Limit evaluation history size
     
     def _parse_score(self, content: str, metric: str = "score") -> float:
@@ -141,7 +141,6 @@ class EnhancedFitnessEvaluator:
             # Extract intent analysis from context
             intent_analysis = context.get('intent_analysis', {})
             original_prompt = context.get('original_prompt', '')
-            generated_context = context.get('generated_context', '')
             
             # Scoring functions for each metric
             def clarity_eval():
@@ -325,24 +324,28 @@ class EnhancedFitnessEvaluator:
         technical_score = max(0.3, technical_score)
         
         # Context retention score
-        context_keywords = context.get('keywords', [])
+        context_keywords = list(context.get('keywords', []))
         context_keywords.extend(context.get('constraints', []))
         retained_context = sum(keyword.lower() in prompt_lower for keyword in context_keywords)
         context_score = min(1.0, 0.3 + (retained_context / max(1, len(context_keywords))) * 0.7)
         
+        # Tokenize the prompt into words for reliable marker matching
+        prompt_words = re.findall(r'\b\w+\b', prompt_lower)
+        prompt_word_set = set(prompt_words)
+        
         # Adaptability score based on flexible language
         adaptability_markers = ['if', 'when', 'where', 'whenever', 'various', 'different', 'multiple']
-        adaptability_count = sum(1 for marker in adaptability_markers if marker in prompt_lower)
+        adaptability_count = sum(1 for marker in adaptability_markers if marker in prompt_word_set)
         adaptability_score = min(1.0, 0.3 + (adaptability_count / len(adaptability_markers)))
         
         # Robustness score based on constraints and verification
         robustness_markers = ['ensure', 'verify', 'check', 'confirm', 'validate', 'must', 'should']
-        robustness_count = sum(1 for marker in robustness_markers if marker in prompt_lower)
+        robustness_count = sum(1 for marker in robustness_markers if marker in prompt_word_set)
         robustness_score = min(1.0, 0.3 + (robustness_count / len(robustness_markers)))
         
         # Generalization score based on domain independence
         domain_markers = ['in', 'for', 'any', 'all', 'every', 'each', 'general']
-        generalization_count = sum(1 for marker in domain_markers if marker in prompt_lower)
+        generalization_count = sum(1 for marker in domain_markers if marker in prompt_word_set)
         generalization_score = min(1.0, 0.3 + (generalization_count / len(domain_markers)))
         
         scores = {
@@ -385,7 +388,7 @@ class EnhancedFitnessEvaluator:
             max_score = max(llm_score, rule_score)
             min_score = min(llm_score, rule_score)
             
-            # Apply weights: 70% for better score, 30% for worse score
+            # Apply weights: 75% for better score, 25% for worse score
             aggregated_scores[metric] = (max_score * 0.75) + (min_score * 0.25)
 
             # Ensure minimum score of 0.1
@@ -480,6 +483,8 @@ class EnhancedFitnessEvaluator:
         avg_scores = {metric: [] for metric in self.metrics.get_all_metrics()}
         for entry in history:
             for metric, score in entry.items():
+                if metric not in avg_scores:
+                    continue
                 avg_scores[metric].append(score)
         
         # Return averages

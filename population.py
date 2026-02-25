@@ -23,7 +23,6 @@ class Population:
         self.size = size
         self.generation = 0
         self.age_threshold = 15  # Individuals older than this may be culled
-        self.diversity_threshold = 0.75  # Maximum similarity for accepted individuals
         
         # Initialize population with provided strategies or randomly
         if init_strategies:
@@ -175,18 +174,21 @@ class Population:
             reverse=True
         )
         
-        # Keep elite individuals
-        elite_size = min(elite_size, len(sorted_individuals))
+        # Keep elite individuals - clamp to min of elite_size, len(sorted_individuals), and self.size
+        elite_size = min(elite_size, len(sorted_individuals), self.size)
         elite = sorted_individuals[:elite_size]
         
-        # Optionally remove low-fitness, old individuals
+        # Optionally remove low-fitness, old individuals - apply to sorted_individuals before building new_population
         if diversity_preserved:
-            # Filter out individuals that are very old with low fitness
-            self.individuals = [
-                ind for ind in self.individuals
+            # Filter out individuals that are very old with low fitness before creating new_population
+            filtered_individuals = [
+                ind for ind in sorted_individuals
                 if ind.age < self.age_threshold or 
                    ind.fitness.get("overall", 0) > 0.3
             ]
+            # Re-sort after filtering to get correct elites
+            sorted_individuals = filtered_individuals
+            elite = sorted_individuals[:elite_size]
         else:
             self.individuals = sorted_individuals
         

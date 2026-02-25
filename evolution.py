@@ -128,6 +128,11 @@ class Evolution:
         # Track best fitness for improvement calculation
         initial_fitness = best_fitness
         best_generation = self.generation
+        # Use the actual generation where the best individual was found, if known
+        if getattr(self, "peak_individual_state", None):
+            best_generation = self.peak_individual_state.get("generation", best_generation)
+        elif self.best_individual is not None and hasattr(self.best_individual, "generation"):
+            best_generation = getattr(self.best_individual, "generation", best_generation)
 
         # Create output directory if it doesn't exist
         os.makedirs(self.output_dir, exist_ok=True)
@@ -191,7 +196,10 @@ class Evolution:
 
             # Track diversity
             diversity_metrics = self.population.get_diversity_metrics()
-            self.evolution_stats['diversity_score'] = diversity_metrics.get('average_similarity', 0.0)
+            average_similarity = diversity_metrics.get('average_similarity', 0.0)
+            # Convert similarity (higher = more similar) to diversity (higher = more diverse)
+            diversity_score = max(0.0, min(1.0, 1.0 - average_similarity))
+            self.evolution_stats['diversity_score'] = diversity_score
 
             # Save state periodically
             if self.generation % self.save_frequency == 0:
@@ -585,9 +593,11 @@ class Evolution:
             if self.history:
                 best_gen = max(range(len(self.history)), key=lambda i: self.history[i]['max_fitness'])
                 best_val = self.history[best_gen]['max_fitness']
-                plt.annotate(f'Best: {best_val:.3f}\nGen {best_gen}', 
-                           xy=(best_gen, best_val),
-                           xytext=(best_gen + 1, best_val + 0.05),
+                # Use the actual generation number, not the index
+                best_gen_number = generations[best_gen]
+                plt.annotate(f'Best: {best_val:.3f}\nGen {best_gen_number}', 
+                           xy=(best_gen_number, best_val),
+                           xytext=(best_gen_number + 1, best_val + 0.05),
                            fontsize=9,
                            ha='left')
 

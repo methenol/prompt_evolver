@@ -92,11 +92,11 @@ class LLMBreeder:
         # Strategy 2: Try to fix common JSON issues
         fixed_text = text
         
-        # Replace single quotes with double quotes
-        fixed_text = re.sub(r"(\w+)'\s*:", r'"\1":', fixed_text)
-        fixed_text = re.sub(r':\s*\'', ': "', fixed_text)
-        fixed_text = re.sub(r"'\s*([^\s,}]+)", r' "\1"', fixed_text)
-        
+        # Replace single-quoted JSON keys and values with double-quoted ones
+        # Convert keys like {'key': ...} -> {"key": ...}
+        fixed_text = re.sub(r"'(\w+)'\s*:", r'"\1":', fixed_text)
+        # Convert single-quoted string values like : 'value' -> : "value"
+        fixed_text = re.sub(r":\s*\'([^\']*)\'", r': "\1"', fixed_text)
         # Remove trailing commas
         fixed_text = re.sub(r',(\s*[}\]])', r'\1', fixed_text)
         
@@ -218,18 +218,20 @@ Your response must be ONLY valid JSON with keys "offspring1" and "offspring2".""
                 # Extract and parse the JSON response using a more robust approach
                 result_text = response.choices[0].message.content
 
-                # Try to parse JSON
+                # Try to parse JSON with specific keys
                 result = self._parse_json_response(result_text, ['offspring1', 'offspring2'])
                 
                 if result and 'offspring1' in result and 'offspring2' in result:
                     offspring1 = result['offspring1']
                     offspring2 = result['offspring2']
                 else:
-                    # Try more aggressive extraction
-                    result = self._parse_json_response(result_text, ['offspring1', 'offspring2'])
+                    # Try more aggressive extraction with different strategy - look for any two values
+                    result = self._parse_json_response(result_text)  # Don't specify keys this time
                     if result and len(result) >= 2:
-                        offspring1 = list(result.values())[0]
-                        offspring2 = list(result.values())[1]
+                        # Extract values in order they appear
+                        values = list(result.values())[:2]
+                        offspring1 = values[0]
+                        offspring2 = values[1]
                     else:
                         raise ValueError("Failed to extract offspring from response")
                 
@@ -267,8 +269,12 @@ Your response must be ONLY valid JSON with keys "offspring1" and "offspring2".""
         # If all retries failed, try a simpler breeding approach before falling back
         try:
             # Attempt a final breeding with minimal prompt and higher temperature
-            simple_system_prompt = "Create two different prompt variations that combine elements from two parent prompts. Return ONLY JSON with 'offspring1' and 'offspring2' keys."
-            simple_user_prompt = f"Parent 1: {prompt1}\n\nParent 2: {prompt2}\n\nCreate two offspring prompts combining these. Return ONLY JSON: { {'offspring1': '...', 'offspring2': '...'} }"
+            simple_system_prompt = 'Create two different prompt variations that combine elements from two parent prompts. Return ONLY JSON with "offspring1" and "offspring2" keys.'
+            simple_user_prompt = (
+                f"Parent 1: {prompt1}\n\nParent 2: {prompt2}\n\n"
+                'Create two offspring prompts combining these. '
+                'Return ONLY JSON, for example: {"offspring1": "...", "offspring2": "..."}'
+            )
 
             # OpenAI client will handle rate limiting automatically
             response = self.client.chat.completions.create(

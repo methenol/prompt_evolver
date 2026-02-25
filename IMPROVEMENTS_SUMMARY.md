@@ -7,13 +7,13 @@ This document summarizes the comprehensive improvements made to the Prompt Evolv
 ## 1. Enhanced Fitness Metrics (`unified_fitness_metrics.py`)
 
 ### Added New Metrics
-- **adaptability (0.10 weight)**: Measures how well the prompt handles variations in input or context
-- **robustness (0.05 weight)**: Measures resistance to degradation from minor perturbations
-- **generalization (0.03 weight)**: Measures ability to work across different contexts and domains
+- **adaptability (0.07 weight)**: Measures how well the prompt handles variations in input or context
+- **robustness (0.04 weight)**: Measures resistance to degradation from minor perturbations
+- **generalization (0.04 weight)**: Measures ability to work across different contexts and domains
 
 ### Improved Weight Distribution
 - Rebalanced existing metrics to make room for new resilience-focused metrics
-- Maintained high weight for context_retention (0.20) as it's critical for preserving prompt intent
+- Maintained high weight for context_retention (0.17) as it's critical for preserving prompt intent
 - Total weights sum to 1.0 as required
 
 ### New Features
